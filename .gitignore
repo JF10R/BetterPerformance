@@ -1,0 +1,39 @@
+# Build and IDE artifacts
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+
+# Local game references and binaries
+local/
+lib/
+libs/
+libs-Valheim/
+*.dll
+*.exe
+*.pdb
+*.mdb
+
+# Captures, worlds, and local analysis
+.qa/
+captures/
+results/
+artifacts/
+*.log
+*.db
+*.fwl
+*.bak
+*.old
+
+# Secrets and machine-specific settings
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.props
+
+# OS files
+.DS_Store
+Thumbs.db
