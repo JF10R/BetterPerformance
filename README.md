@@ -2,17 +2,17 @@
 
 Performance diagnostics and, later, evidence-based optimizations for Valheim clients and dedicated servers.
 
-**Status: project foundation. No plugin, installer, or performance improvement is implemented yet.**
+**Status: experimental diagnostics plugin, version 0.1.0. Offline validation and local compilation are available; runtime verification is pending. No performance optimizations are enabled or claimed.**
 
 The initial focus is measuring a client and dedicated server running on the same computer. The goal is to distinguish simulation stalls, object-loading delays, save pauses, and network backlogs before changing game behavior.
 
-### Initial scope
+### Implemented diagnostics
 
-- Measure the client and dedicated server independently and correlate their captures.
-- Compare frame and update times, object creation/removal, zone loading, saves, and networking.
-- Keep collection bounded and measure the collector's own overhead.
-- Export local diagnostic summaries suitable for repeatable before/after comparisons.
-- Preserve gameplay, world persistence, and network behavior during the diagnostics phase.
+- Independent client/server captures with UTC timestamps and monotonic durations.
+- Loop and method timing distributions, process CPU/memory, GC activity, reported socket queues, scene instance counts, zone readiness and effective simulation radius.
+- Separate timing of save preparation, the save call and the save worker.
+- Bounded aggregation and background JSONL export with dropped-record accounting and a per-capture file-size limit.
+- A Python report command for comparing captures without changing gameplay, persistence or networking settings.
 
 The first two-process capture cannot establish what a remote client is doing. Measurements from additional clients can be added when needed.
 
@@ -20,19 +20,29 @@ The first two-process capture cannot establish what a remote client is doing. Me
 
 BetterPerformance is an independent project. It is intended to work alongside ValheimPlus, without requiring it.
 
-The diagnostics phase is intended to coexist with BetterNetworking. A possible later networking module may reuse and improve BetterNetworking's implementation; if that happens, overlapping networking patches must not run simultaneously. No BetterNetworking code is included in this initial repository, and no runtime compatibility is certified yet.
+The diagnostics phase is intended to coexist with BetterNetworking. Queue measurements explicitly retain its adjusted socket results. A possible later networking module may reuse and improve BetterNetworking's implementation; if that happens, overlapping networking patches must not run simultaneously. No BetterNetworking code is included, and runtime coexistence is not certified yet.
 
 ### Documentation
 
 - [Measurement scope and interpretation](docs/measurements.md)
+- [Build, installation and capture guide](docs/capture-guide.md)
+- [Validation results and remaining checks](docs/validation.md)
 - [Development rules](AGENTS.md)
 - [License](LICENSE)
 
 ### Development
 
-There is currently no build or installation step. Runtime instrumentation, packaging, and automated checks will be added with the first implementation.
+The plugin targets BepInEx 5 / .NET Framework 4.7.2. Build against your local game installation:
 
-Do not commit Valheim assemblies, decompiled game sources, save files, or raw diagnostic captures. Keep game references and test artifacts local. Creating this repository does not install anything or start the game or server.
+```powershell
+dotnet run --project tests/BetterPerformance.Tests -c Release
+python -m unittest discover -s tests -p 'test_*.py' -v
+dotnet build src/BetterPerformance/BetterPerformance.csproj -c Release '-p:ValheimDir=D:/Steam/steamapps/common/Valheim'
+```
+
+The offline checks require .NET SDK 10 and Python 3.10+. CI runs the game-independent tests on Windows and Linux. The [capture guide](docs/capture-guide.md) covers configuration, packaging and interpretation.
+
+Do not commit Valheim assemblies, decompiled game sources, save files, or raw diagnostic captures. Keep game references and test artifacts local. Building and packaging do not install anything or start the game or server.
 
 ### Credits and license
 

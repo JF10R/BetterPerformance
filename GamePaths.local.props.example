@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Copy to GamePaths.local.props and set your installation directory. -->
+    <ValheimDir>D:/Steam/steamapps/common/Valheim</ValheimDir>
+  </PropertyGroup>
+</Project>

@@ -5,6 +5,8 @@ obj/
 .idea/
 *.user
 *.suo
+__pycache__/
+*.pyc
 
 # Local game references and binaries
 local/
