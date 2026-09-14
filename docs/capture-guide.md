@@ -1,6 +1,6 @@
 # Capture guide
 
-BetterPerformance 0.2.0 provides diagnostics and a separate, opt-in [object-creation budget](object-budget.md). Compilation and offline tests do not establish general runtime compatibility or low overhead. It changes no networking settings and contains no BetterNetworking implementation.
+BetterPerformance 0.3.0 provides diagnostics and a separate, opt-in [object-creation budget](object-budget.md), with new, untested [quota and loot-priority options](loot-latency.md). Compilation does not establish runtime compatibility or low overhead. It changes no networking settings and contains no BetterNetworking implementation.
 
 ### Build and package
 

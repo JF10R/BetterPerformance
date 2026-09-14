@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.3.0 — untested additions
+
+- Add opt-in quota expansion under the existing soft creation-time budget.
+- Add opt-in nearby-loot priority within vanilla object-type tiers; retain vanilla order every fourth eligible pass.
+- Bound prefab classification and scratch storage; expose option activity and fallbacks in captures.
+- Prepare regression coverage without executing tests or launching game/server sessions, as requested. No new performance claim or package release.
+
 ### 0.2.0
 
 - Add an opt-in soft time budget shared by near/distant scene object creation.

@@ -1,5 +1,12 @@
 # Validation record
 
+### Version 0.3.0 — validation deferred
+
+- Add separately disabled adaptive-quota and nearby-loot scheduling options, bounded classification caches, regular vanilla-order passes and diagnostics.
+- Regression fixtures are added/updated but **not executed**, at the user's request. No game/server sessions, benchmarks or automated test suites were launched for this version.
+- Source review and compilation are the only implementation checks; no new performance or runtime-compatibility claim. CI is intentionally skipped for the implementation commit.
+- See [behavior, constraints and deferred checks](loot-latency.md). The tested 0.2.0 package is not replaced.
+
 ### Version 0.2.0 — 2026-09-14 UTC
 
 - Thirteen C# and eleven Python tests pass. Local Release builds pass against client and dedicated-server references.

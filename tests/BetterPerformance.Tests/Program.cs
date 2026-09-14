@@ -14,7 +14,8 @@ internal static class Program
     {
         var tests = new Action[] { HistogramBounds, ConcurrentDrain, JsonRoundTrip,
             BoundedQueue, WriterFailure, BoundedFailureAccounting, FileLimit, UniqueFiles, CaptureClock,
-            ResidentMemory, MarkerNames, CreationBudgetProgress, CreationBudgetBoundaries };
+            ResidentMemory, MarkerNames, CreationBudgetProgress, CreationBudgetBoundaries,
+            AdaptiveCreationQuota, LootPriorityTiers, LootPriorityFailure, LootPriorityFairness };
         int failures = 0;
         foreach (var test in tests)
         {
@@ -71,6 +72,50 @@ internal static class Program
         book.Record(Metric.LoopInterval, 1000000);
         Check(book.Drain().Single(x => x.Name == "LoopInterval").P99UpperBoundMs == 1000000,
             "Overflow bucket must use the actual maximum, not an undersized upper bound.");
+    }
+
+    private static void AdaptiveCreationQuota()
+    {
+        Check(CreationScheduling.ExpandQuota(10, 64, false) == 10, "Disabled quota must retain vanilla behavior.");
+        Check(CreationScheduling.ExpandQuota(10, 64, true) == 64, "Cheap batches can use a larger allowance.");
+        Check(CreationScheduling.ExpandQuota(100, 64, true) == 100, "Do not reduce loading-screen allowance.");
+        var budget = new CreationBudget(0, 4);
+        budget.RecordCreation(true);
+        Check(!budget.AllowNext(true, 4), "Extra count allowance must not bypass the time budget.");
+    }
+
+    private static void LootPriorityTiers()
+    {
+        var items = new List<(int Tier, string Name, bool Loot)>
+        {
+            (3, "terrain", false), (2, "solid", false),
+            (1, "actor", false), (1, "near_loot_a", true), (1, "near_loot_b", true),
+            (0, "far_loot", false), (0, "decoration", false), (0, "near_loot_c", true)
+        };
+        var scratch = new List<(int Tier, string Name, bool Loot)>();
+        int prioritized = CreationScheduling.PrioritizeWithinTiers(items, scratch, item => item.Tier, item => item.Loot);
+        Check(prioritized == 3, "Count selected candidates, not created objects.");
+        Check(items.Select(item => item.Name).SequenceEqual(new[] { "terrain", "solid", "near_loot_a", "near_loot_b", "actor", "near_loot_c", "far_loot", "decoration" }),
+            "Preserve tier boundaries and stable order within priority and ordinary groups.");
+        Check(scratch.Count == 0, "Scratch must not retain object references.");
+    }
+
+    private static void LootPriorityFailure()
+    {
+        var items = new List<int> { 1, 2, 3 };
+        var scratch = new List<int>();
+        bool failed = false;
+        try { CreationScheduling.PrioritizeWithinTiers(items, scratch, _ => 0, value => value == 3 ? throw new InvalidOperationException("fixture") : value == 2); }
+        catch (InvalidOperationException) { failed = true; }
+        Check(failed && items.SequenceEqual(new[] { 1, 2, 3 }), "Classification failure must preserve the entire vanilla order.");
+        Check(scratch.Count == 0, "Failure must release scratch references.");
+    }
+
+    private static void LootPriorityFairness()
+    {
+        int turns = 0;
+        for (int i = 0; i < 12; i++)
+            Check(CreationScheduling.TakePriorityTurn(ref turns) == (i % 4 != 3), "Every fourth eligible pass must preserve vanilla order.");
     }
 
     private static void ConcurrentDrain()

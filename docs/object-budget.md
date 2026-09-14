@@ -1,5 +1,7 @@
 # Experimental object-creation budget
 
+This page records the **0.2.0 budget-only behavior and experiment**. Version 0.3.0 adds separately disabled [quota and loot-priority options](loot-latency.md); no tests have been run for those additions, and the results below do not validate them.
+
 ### Behavior
 
 Version 0.2.0 adds one optimization module, disabled by default. It adds a soft elapsed-time budget to `ZNetScene.CreateObjects`, shared by the near and distant creation loops. The clock starts before vanilla candidate scanning and sorting. Between candidates, an exhausted budget ends the existing enumeration through its normal disposal path. Remaining objects stay pending for a later update.

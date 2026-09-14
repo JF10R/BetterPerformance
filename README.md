@@ -2,7 +2,7 @@
 
 Performance diagnostics and experimental, measurable optimizations for Valheim clients and dedicated servers.
 
-**Status: experimental plugin, version 0.2.0. Diagnostics are enabled by default. The new object-creation budget is opt-in; it can trade shorter creation batches for longer loading delays. Rendered gameplay and total measurement overhead remain unvalidated.**
+**Status: experimental plugin, version 0.3.0. Diagnostics are enabled by default; optimization options are disabled by default. The new quota and nearby-loot options have not been tested. The earlier 0.2.0 budget-only measurements do not validate these additions.**
 
 The initial focus is measuring a client and dedicated server running on the same computer. The goal is to distinguish simulation stalls, object-loading delays, save pauses, and network backlogs before changing game behavior.
 
@@ -19,9 +19,11 @@ The first two-process capture cannot establish what a remote client is doing. Me
 
 ### Experimental object loading
 
-An optional soft time budget spreads scene object creation across updates. Vanilla ordering, readiness checks, object-count limits, invalid-prefab handling and save/network formats remain in place. It does not change view distance or move Unity work to another thread.
+An optional soft time budget spreads scene object creation across updates. Separate 0.3.0 options can raise the count allowance while time remains and favor nearby loot within vanilla object-type tiers. Readiness checks, invalid-prefab handling and save/network formats remain in place. It does not change view distance or move Unity work to another thread.
 
 Read the [object-budget guide and experiment](docs/object-budget.md) before enabling it. The module is separate from diagnostics and can be switched off locally during a session after installation at startup. No BetterNetworking implementation is duplicated.
+
+The [loot-scheduling guide](docs/loot-latency.md) describes the new independent options, limits and deferred validation. No tests were executed for these additions at the user's request.
 
 ### Relationship to other mods
 

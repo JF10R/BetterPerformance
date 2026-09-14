@@ -32,11 +32,13 @@ foreach (string methodName in new[] { "CreateObjectsSorted", "CreateDistantObjec
     List<CodeInstruction> original = PatchProcessor.GetOriginalInstructions(method);
     var snapshot = original.Select(i => (i.opcode, i.operand, labels: i.labels.ToArray(), blocks: i.blocks.ToArray())).ToArray();
     List<CodeInstruction> patched = Apply(original, method);
+    bool near = methodName == "CreateObjectsSorted";
     var injected = patched.Where(i => i.operand is MethodInfo called && called.DeclaringType == patchType).ToList();
-    Check(injected.Count == 2, methodName + ": exactly two injected calls");
+    Check(injected.Count == (near ? 3 : 2), methodName + ": expected number of injected calls");
+    Check(patched.Count - original.Count == (near ? 5 : 2), methodName + ": no unexpected added instructions");
     Check(injected.Count(i => ((MethodInfo)i.operand).Name == "Created") == 1, methodName + ": result hook exists");
     Check(injected.Count(i => ((MethodInfo)i.operand).Name == "Continue") == 1, methodName + ": gate exists");
-    var retained = patched.Except(injected).ToList();
+    var retained = patched.Where(original.Contains).ToList();
     Check(retained.SequenceEqual(original), methodName + ": original instruction order retained");
     for (int i = 0; i < original.Count; i++) {
         var before = snapshot[i]; var after = original[i];
@@ -51,6 +53,21 @@ foreach (string methodName in new[] { "CreateObjectsSorted", "CreateDistantObjec
     Check(patched[gateIndex - 1].operand is MethodInfo move && move.Name == "MoveNext", methodName + ": gate follows MoveNext");
     Check(patched[gateIndex + 1].opcode == OpCodes.Brtrue || patched[gateIndex + 1].opcode == OpCodes.Brtrue_S, methodName + ": existing exit branch retained");
     Check(original.Any(i => i.blocks.Count > 0), methodName + ": actual exception blocks covered");
+    if (near)
+    {
+        int priorityIndex = patched.FindIndex(i => i.operand is MethodInfo called && called.DeclaringType == patchType && called.Name == "Prioritize");
+        Check(priorityIndex >= 3 && patched[priorityIndex - 3].operand is MethodInfo sort && sort.Name == "Sort" &&
+            sort.DeclaringType!.IsGenericType && sort.DeclaringType.GetGenericTypeDefinition() == typeof(List<>), "Priority follows vanilla sorting.");
+        Check(patched[priorityIndex - 2].opcode == OpCodes.Ldarg_0 && patched[priorityIndex - 1].opcode == OpCodes.Ldfld &&
+            patched[priorityIndex - 1].operand is FieldInfo field && field.Name == "m_tempCurrentObjects2", "Priority receives the existing sorted candidate list.");
+        var missingSort = original.Select(i => new CodeInstruction(i)).ToList();
+        var sorting = missingSort.Single(i => i.operand is MethodInfo called && called.Name == "Sort");
+        sorting.opcode = OpCodes.Nop;
+        sorting.operand = null;
+        bool sortRejected = false;
+        try { Apply(missingSort, method); } catch (InvalidOperationException) { sortRejected = true; }
+        Check(sortRejected, "Unsupported sorting layout must be rejected.");
+    }
     var malformed = original.Select(i => new CodeInstruction(i)).ToList();
     int finalMove = malformed.FindLastIndex(i => i.operand is MethodInfo called && called.Name == "MoveNext");
     malformed[finalMove + 1].opcode = OpCodes.Brfalse;
@@ -100,6 +117,20 @@ Check(!(bool)active.GetValue(current.GetValue(null))!, "outer finalizer restores
 begin.Invoke(null, outerState);
 budget = budgetField.GetValue(current.GetValue(null))!;
 Check((int)budget.GetType().GetProperty("Attempts")!.GetValue(budget)! == 0, "new batch starts with fresh counters");
+end.Invoke(null, outerState);
+var quotaOption = config.Bind("ObjectLoading", "AdaptiveCreationQuota", false);
+var quotaHook = patchType.GetMethod("ExpandQuota", privateStatic)!;
+object[] allowance = { 10 };
+quotaOption.Value = true;
+quotaHook.Invoke(null, allowance);
+Check((int)allowance[0] == 10, "Quota cannot expand outside an active batch.");
+begin.Invoke(null, outerState);
+quotaHook.Invoke(null, allowance);
+Check((int)allowance[0] == 64, "Active budget can expand the native allowance.");
+quotaOption.Value = false;
+allowance[0] = 10;
+quotaHook.Invoke(null, allowance);
+Check((int)allowance[0] == 10, "Disabled adaptive quota preserves the native allowance.");
 end.Invoke(null, outerState);
 Console.WriteLine("PASS direct disabled/nested/finalizer state checks (no Unity creation invoked)");
 Console.WriteLine("PASS " + checks + " checks; " + gameDirectory);
