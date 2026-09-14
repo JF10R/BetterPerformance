@@ -2,7 +2,7 @@
 
 Performance diagnostics and, later, evidence-based optimizations for Valheim clients and dedicated servers.
 
-**Status: experimental diagnostics plugin, version 0.1.0. Offline validation and local compilation are available; runtime verification is pending. No performance optimizations are enabled or claimed.**
+**Status: experimental diagnostics plugin, version 0.1.0. Offline checks and an isolated headless client/server test pass on Valheim 1.0.12. Rendered gameplay and total measurement overhead remain unvalidated. No performance optimizations are enabled or claimed.**
 
 The initial focus is measuring a client and dedicated server running on the same computer. The goal is to distinguish simulation stalls, object-loading delays, save pauses, and network backlogs before changing game behavior.
 
@@ -20,7 +20,7 @@ The first two-process capture cannot establish what a remote client is doing. Me
 
 BetterPerformance is an independent project. It is intended to work alongside ValheimPlus, without requiring it.
 
-The diagnostics phase is intended to coexist with BetterNetworking. Queue measurements explicitly retain its adjusted socket results. A possible later networking module may reuse and improve BetterNetworking's implementation; if that happens, overlapping networking patches must not run simultaneously. No BetterNetworking code is included, and runtime coexistence is not certified yet.
+The diagnostics phase is intended to coexist with BetterNetworking. Queue measurements explicitly retain its adjusted socket results. A possible later networking module may reuse and improve BetterNetworking's implementation; if that happens, overlapping networking patches must not run simultaneously. No BetterNetworking code is included. One headless run with BetterNetworking 2.3.3 and ValheimPlus 0.10.1.1 completed; broader compatibility remains unvalidated.
 
 ### Documentation
 
