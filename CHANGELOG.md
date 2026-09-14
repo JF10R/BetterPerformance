@@ -1,5 +1,13 @@
 # Changelog
 
+### 0.2.0
+
+- Add an opt-in soft time budget shared by near/distant scene object creation.
+- Preserve vanilla readiness, priority, count limits and invalid-prefab behavior; guarantee progress past failed prefabs.
+- Add a main-thread runtime toggle and capture counters for controlled comparisons.
+- Add budget boundary/progress regression tests and document latency tradeoffs.
+- Validate one continuous eight-window client/server comparison: lower client creation-batch peaks, modest loop changes, variable loot latency; retain default-off status.
+
 ### 0.1.1
 
 - Fix unavailable Windows Unity/Mono working-set readings with native PSAPI; omit invalid values.

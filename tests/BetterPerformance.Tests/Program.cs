@@ -14,7 +14,7 @@ internal static class Program
     {
         var tests = new Action[] { HistogramBounds, ConcurrentDrain, JsonRoundTrip,
             BoundedQueue, WriterFailure, BoundedFailureAccounting, FileLimit, UniqueFiles, CaptureClock,
-            ResidentMemory, MarkerNames };
+            ResidentMemory, MarkerNames, CreationBudgetProgress, CreationBudgetBoundaries };
         int failures = 0;
         foreach (var test in tests)
         {
@@ -29,6 +29,29 @@ internal static class Program
     private static void Check(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static void CreationBudgetProgress()
+    {
+        var budget = new CreationBudget(100, 4);
+        Check(budget.AllowNext(true, 200), "Readiness skips must not consume the minimum progress allowance.");
+        budget.RecordCreation(false);
+        Check(budget.AllowNext(true, 200), "A retained invalid prefab must not starve later valid objects.");
+        budget.RecordCreation(true);
+        Check(!budget.AllowNext(true, 200), "Stop after a successful creation exhausts the budget.");
+        Check(!budget.AllowNext(false, 100), "Never manufacture another enumeration element.");
+        Check(budget.Attempts == 2 && budget.Successes == 1, "Record attempts independently of success.");
+    }
+
+    private static void CreationBudgetBoundaries()
+    {
+        var budget = new CreationBudget(100, 4);
+        budget.RecordCreation(true);
+        Check(budget.AllowNext(true, 103), "Allow work before the deadline.");
+        Check(!budget.AllowNext(true, 104), "Yield at the exact deadline.");
+        var nextBatch = new CreationBudget(200, 4);
+        Check(nextBatch.AllowNext(true, 300), "Each batch must regain minimum progress.");
+        Check(nextBatch.Attempts == 0, "Attempts must not leak between batches.");
     }
 
     private static void HistogramBounds()

@@ -1,5 +1,13 @@
 # Validation record
 
+### Version 0.2.0 — 2026-09-14 UTC
+
+- Thirteen C# and eleven Python tests pass. Local Release builds pass against client and dedicated-server references.
+- The optional local game verifier passes 203 assertions per installed assembly, including default-off behavior, original IL/exception-block preservation, unsupported-layout rejection and nested state cleanup. These include per-instruction checks, not 203 independent scenarios.
+- One continuous eight-window headless comparison completed at Ultra with BetterNetworking 2.3.3 and ValheimPlus 0.10.1.1 present. All 512 tracked test items appeared and were removed; both captures completed without dropped records or probe failures.
+- Client creation-batch peaks decreased, while overall loop gains were modest and loot latency varied across pairs. The server did not exhaust its budget. The optimization remains disabled by default; see [results and uncertainty](object-budget.md).
+- Test processes stopped. The 26 protected `sept_2026` files retained their hashes and count. Existing installations and characters were not test targets.
+
 ### Version 0.1.1 — 2026-09-14 UTC
 
 - Eleven C# tests pass, including native resident-memory availability, marker validation and phase-boundary identification.

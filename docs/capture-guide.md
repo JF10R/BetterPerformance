@@ -1,6 +1,6 @@
 # Capture guide
 
-BetterPerformance 0.1.1 is an experimental diagnostics build. Compilation and offline tests do not establish general runtime compatibility or low overhead. It changes no networking settings and contains no BetterNetworking implementation.
+BetterPerformance 0.2.0 provides diagnostics and a separate, opt-in [object-creation budget](object-budget.md). Compilation and offline tests do not establish general runtime compatibility or low overhead. It changes no networking settings and contains no BetterNetworking implementation.
 
 ### Build and package
 
@@ -35,6 +35,7 @@ The first launch generates `BepInEx/config/jf10r.BetterPerformance.cfg`. Default
 - Queue up to 16 records for the background writer; discard excess records and count them.
 - Limit each capture to 64 MiB, including its writer completion record.
 - Stop on world-session exit, the duration limit, a writer failure, or the file-size limit.
+- Leave the experimental object-creation budget disabled.
 
 Each process writes to its own `BepInEx/BetterPerformance/captures/` directory. Filenames contain UTC start time, role and a random capture ID. Collection includes loading; separate loading from steady play when interpreting it.
 
@@ -46,7 +47,7 @@ bp_capture status
 bp_capture stop
 ```
 
-Commands affect only that process. They are not remote server commands. The dedicated server can use automatic capture without an interactive console. Restart to apply configuration changes; `MethodTimings=false` omits method probes for an overhead comparison. `Enabled=false` installs no probes and starts no captures.
+Commands affect only that process. They are not remote server commands. The dedicated server can use automatic capture without an interactive console. Restart to apply configuration changes; `Capture.MethodTimings=false` omits method probes for an overhead comparison. `Capture.Enabled=false` installs no diagnostic probes and starts no captures; `ObjectLoading.Enabled` controls the optimization independently.
 
 File serialization and writes run on a background thread. Shutdown allows at most two seconds to flush; forced termination, a blocked filesystem, or a full disk may leave an incomplete tail. Check the completion record and the BepInEx log. A new capture is refused while the previous writer is still finishing, preventing accumulation of blocked writers.
 

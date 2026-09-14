@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.1.1";
+        public const string PluginVersion = "0.2.0";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -43,12 +43,30 @@ namespace BetterPerformance
             capacity = Config.Bind("Capture", "QueueCapacity", 16, new ConfigDescription("Maximum queued export records. Full queues drop records without blocking.", new AcceptableValueRange<int>(2, 64)));
             fileLimit = Config.Bind("Capture", "MaxFileMiB", 64, new ConfigDescription("Maximum size of one capture, including its completion record.", new AcceptableValueRange<int>(1, 256)));
             methodTimings = Config.Bind("Capture", "MethodTimings", true, "Install observational timing probes. Requires restart; disable for an overhead comparison.");
+            ObjectCreationBudget.Install(Config, Logger);
+            new Terminal.ConsoleCommand("bp_budget", "Experimental object budget: on | off | status (installed at startup; local process only)",
+                (Terminal.ConsoleEvent)(args =>
+                {
+                    if (args.Args.Length == 2 && (args.Args[1] == "on" || args.Args[1] == "off"))
+                        SetObjectCreationBudgetEnabled(args.Args[1] == "on");
+                    args.Context.AddString("Object budget: " + ObjectCreationBudget.Status + "; active=" + ObjectCreationBudget.Enabled);
+                }));
             if (!captureEnabled.Value) { Logger.LogInfo("Diagnostics disabled. No probes installed."); return; }
             instances = AccessTools.Field(typeof(ZNetScene), "m_instances");
             TimingHooks.Install(harmony, Logger, methodTimings.Value);
             new Terminal.ConsoleCommand("bp_capture", "BetterPerformance: start | stop | status (local process only)",
                 (Terminal.ConsoleEvent)Command);
-            Logger.LogInfo("BetterPerformance diagnostics ready. No gameplay or networking settings changed.");
+            Logger.LogInfo("BetterPerformance diagnostics ready. Object budget: " + ObjectCreationBudget.Status);
+        }
+
+        // Main-thread-only runtime switch for a module explicitly installed at startup.
+        // Does not persist configuration or communicate with another process.
+        public static bool SetObjectCreationBudgetEnabled(bool enabled)
+        {
+            if (instance == null || !ObjectCreationBudget.Installed ||
+                System.Threading.Thread.CurrentThread.ManagedThreadId != instance.mainThreadId) return false;
+            ObjectCreationBudget.Enabled = enabled;
+            return true;
         }
 
         // Main-thread-only scenario API; bounded labels/records, no file access or RPC.
@@ -132,7 +150,7 @@ namespace BetterPerformance
             {
                 new TextValue("plugin_version", PluginVersion),
                 new TextValue("game_version", global::Version.GetVersionString(false)),
-                new TextValue("mode", "diagnostics_only"),
+                new TextValue("mode", ObjectCreationBudget.Installed ? "diagnostics_with_optional_object_budget" : "diagnostics_only"),
                 new TextValue("queue_semantics", "socket API result; active mods may adjust it or make it negative"),
                 new TextValue("percentiles", "approximate upper bounds from fixed logarithmic buckets"),
                 new TextValue("probe.SceneInstanceCount", instances == null ? "unavailable" : "enabled"),
@@ -162,6 +180,7 @@ namespace BetterPerformance
             long started = Stopwatch.GetTimestamp();
             var gauges = new List<NumberValue>();
             var labels = new List<TextValue> { new TextValue("role", Role()) };
+            ObjectCreationBudget.Sample(gauges, labels);
             double elapsed = session.Elapsed;
             double cpuWindowSeconds = elapsed - previousCpuSampleElapsed;
             try
@@ -250,6 +269,7 @@ namespace BetterPerformance
                 else Logger.LogWarning("Capture export did not finish within the shutdown deadline; the tail may be incomplete.");
             }
             harmony.UnpatchSelf();
+            ObjectCreationBudget.Uninstall();
             instance = null;
             process?.Dispose();
         }
