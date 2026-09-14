@@ -17,7 +17,9 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.1.0";
+        public const string PluginVersion = "0.1.1";
+        private static Plugin? instance;
+        private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
         private ConfigEntry<bool> captureEnabled = null!, autoStart = null!, methodTimings = null!;
         private ConfigEntry<int> duration = null!, capacity = null!, fileLimit = null!;
@@ -32,6 +34,8 @@ namespace BetterPerformance
 
         private void Awake()
         {
+            instance = this;
+            mainThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
             captureEnabled = Config.Bind("Capture", "Enabled", true, "Enable diagnostics. Does not change gameplay or networking.");
             autoStart = Config.Bind("Capture", "AutoStart", true, "Start one bounded capture when the first world session begins.");
             duration = Config.Bind("Capture", "DurationSeconds", 300, new ConfigDescription("Maximum duration of each capture.", new AcceptableValueRange<int>(10, 3600)));
@@ -45,6 +49,22 @@ namespace BetterPerformance
             new Terminal.ConsoleCommand("bp_capture", "BetterPerformance: start | stop | status (local process only)",
                 (Terminal.ConsoleEvent)Command);
             Logger.LogInfo("BetterPerformance diagnostics ready. No gameplay or networking settings changed.");
+        }
+
+        // Main-thread-only scenario API; bounded labels/records, no file access or RPC.
+        public static bool Mark(string name)
+        {
+            var plugin = instance;
+            var session = plugin?.current;
+            if (plugin == null || session == null || !CaptureMarkers.IsValid(name) || session.MarkerCount >= 256 ||
+                System.Threading.Thread.CurrentThread.ManagedThreadId != plugin.mainThreadId) return false;
+            try
+            {
+                plugin.Sample(session); // Drain the preceding phase before changing the label.
+                session.Mark(name);
+                return true;
+            }
+            catch { session.RecordProbeFailure(); return false; }
         }
 
         private void Command(Terminal.ConsoleEventArgs args)
@@ -81,7 +101,17 @@ namespace BetterPerformance
                 { StopCapture(session.Writer.LimitReached ? "file_size_limit" : "writer_error"); return; }
                 if (ZNet.instance == null) { StopCapture("world_session_ended"); return; }
                 long now = Stopwatch.GetTimestamp();
-                if (previousLoop != 0) session.Book.Record(Metric.LoopInterval, (now - previousLoop) * 1000.0 / Stopwatch.Frequency);
+                int frameGc = GC.CollectionCount(0);
+                if (previousLoop != 0)
+                {
+                    double gap = (now - previousLoop) * 1000.0 / Stopwatch.Frequency;
+                    session.Book.Record(Metric.LoopInterval, gap);
+                    if (CaptureMarkers.CrossesBoundary(previousLoop, now, session.LastMarkerTimestamp))
+                        session.Book.Record(Metric.LoopAcrossPhaseBoundary, gap);
+                    // Correlation only: this is the entire loop gap, not GC pause duration.
+                    if (frameGc != previousFrameGc) session.Book.Record(Metric.LoopWithGcCollection, gap);
+                }
+                previousFrameGc = frameGc;
                 previousLoop = now;
                 if (session.Elapsed >= session.DurationSeconds) { StopCapture("duration_limit"); return; }
                 if (session.PollDue) Sample(session);
@@ -106,7 +136,7 @@ namespace BetterPerformance
                 new TextValue("queue_semantics", "socket API result; active mods may adjust it or make it negative"),
                 new TextValue("percentiles", "approximate upper bounds from fixed logarithmic buckets"),
                 new TextValue("probe.SceneInstanceCount", instances == null ? "unavailable" : "enabled"),
-                new TextValue("unavailable", "GPU time; RPC/action latency; raw bandwidth; exclusive CPU time; pure disk write duration; remote-client state")
+                new TextValue("unavailable", "GPU time; RPC/action latency; exclusive CPU time; pure disk write duration; remote-client state")
             };
             int pluginCount = 0;
             foreach (var pair in Chainloader.PluginInfos)
@@ -141,12 +171,14 @@ namespace BetterPerformance
                 double delta = Math.Max(0, cpuMs - previousCpuMs);
                 gauges.Add(new NumberValue("process_cpu_delta", delta, "ms"));
                 gauges.Add(new NumberValue("process_cpu_machine_percent", delta / (cpuWindowSeconds * 1000) / Environment.ProcessorCount * 100, "percent"));
-                gauges.Add(new NumberValue("process_working_set", process.WorkingSet64, "bytes"));
                 previousCpuMs = cpuMs;
                 previousCpuSampleElapsed = elapsed;
                 labels.Add(new TextValue("process_metrics", "available"));
             }
             catch { labels.Add(new TextValue("process_metrics", "unavailable")); }
+            if (ProcessMemory.TryRead(out long residentBytes, out string memorySource))
+                gauges.Add(new NumberValue("process_working_set", residentBytes, "bytes"));
+            labels.Add(new TextValue("process_working_set_source", memorySource));
             gauges.Add(new NumberValue("managed_heap_estimate", GC.GetTotalMemory(false), "bytes"));
             for (int i = 0; i < previousGc.Length; i++)
             {
@@ -155,6 +187,7 @@ namespace BetterPerformance
                 previousGc[i] = count;
             }
             var peers = ZNet.instance.GetPeers();
+            SteamTelemetry.Sample(peers, gauges, labels);
             var distance = ZNet.instance.GetSyncedSimulationDistance();
             gauges.Add(new NumberValue("simulation_near_radius", distance.NearSimulationDistance, "sectors"));
             gauges.Add(new NumberValue("simulation_far_extension", distance.FarSimulationDistance, "sectors"));
@@ -217,6 +250,7 @@ namespace BetterPerformance
                 else Logger.LogWarning("Capture export did not finish within the shutdown deadline; the tail may be incomplete.");
             }
             harmony.UnpatchSelf();
+            instance = null;
             process?.Dispose();
         }
     }

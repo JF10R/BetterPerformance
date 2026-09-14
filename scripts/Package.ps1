@@ -28,6 +28,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'docs') -Destination $stagingPath -R
 $scriptDirectory = Join-Path $stagingPath 'scripts'
 New-Item -Path $scriptDirectory -ItemType Directory -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/summarize_capture.py') -Destination $scriptDirectory
+Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/compare_runs.py') -Destination $scriptDirectory
 $zipPath = Join-Path $artifactRoot ("BetterPerformance-$version.zip")
 Compress-Archive -Path (Join-Path $stagingPath '*') -DestinationPath $zipPath -Force
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash

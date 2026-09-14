@@ -13,7 +13,8 @@ internal static class Program
     private static int Main(string[] args)
     {
         var tests = new Action[] { HistogramBounds, ConcurrentDrain, JsonRoundTrip,
-            BoundedQueue, WriterFailure, BoundedFailureAccounting, FileLimit, UniqueFiles, CaptureClock };
+            BoundedQueue, WriterFailure, BoundedFailureAccounting, FileLimit, UniqueFiles, CaptureClock,
+            ResidentMemory, MarkerNames };
         int failures = 0;
         foreach (var test in tests)
         {
@@ -193,6 +194,22 @@ internal static class Program
         var clock = new CaptureClock(DateTime.UtcNow, 100, 10);
         Check(clock.ElapsedSeconds(125) == 2.5, "Monotonic conversion incorrect.");
         Check(clock.ElapsedSeconds(90) == 0, "Negative elapsed time must not leak into records.");
+    }
+
+    private static void ResidentMemory()
+    {
+        Check(ProcessMemory.TryRead(out long bytes, out string source), "Resident memory should be readable on the test host.");
+        Check(bytes > 0 && source != "unavailable", "Zero must never be exported as valid resident memory.");
+    }
+
+    private static void MarkerNames()
+    {
+        Check(CaptureMarkers.IsValid("traversal_128m"), "Scenario identifier rejected.");
+        Check(CaptureMarkers.CrossesBoundary(10, 600, 590), "A pre-marker stall must be marked as crossing, not attributed entirely to the next phase.");
+        Check(!CaptureMarkers.CrossesBoundary(600, 630, 590), "A later loop must not inherit the marker.");
+        Check(!CaptureMarkers.CrossesBoundary(10, 20, 30), "A future marker cannot affect an earlier loop.");
+        foreach (string name in new[] { "", "user name", "line\nbreak", new string('a', 49), "a|b" })
+            Check(!CaptureMarkers.IsValid(name), "Unbounded or free-text marker accepted.");
     }
 
     private sealed class GatedStream : MemoryStream

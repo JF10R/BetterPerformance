@@ -2,7 +2,7 @@
 
 Performance diagnostics and, later, evidence-based optimizations for Valheim clients and dedicated servers.
 
-**Status: experimental diagnostics plugin, version 0.1.0. Offline checks and an isolated headless client/server test pass on Valheim 1.0.12. Rendered gameplay and total measurement overhead remain unvalidated. No performance optimizations are enabled or claimed.**
+**Status: experimental diagnostics plugin, version 0.1.1. Offline checks and isolated headless client/server tests run on Valheim 1.0.12. Rendered gameplay and total measurement overhead remain unvalidated. No performance optimizations are enabled or claimed.**
 
 The initial focus is measuring a client and dedicated server running on the same computer. The goal is to distinguish simulation stalls, object-loading delays, save pauses, and network backlogs before changing game behavior.
 
@@ -12,6 +12,7 @@ The initial focus is measuring a client and dedicated server running on the same
 - Loop and method timing distributions, process CPU/memory, GC activity, reported socket queues, scene instance counts, zone readiness and effective simulation radius.
 - Separate timing of save preparation, the save call and the save worker.
 - Bounded aggregation and background JSONL export with dropped-record accounting and a per-capture file-size limit.
+- Native Steam transport counters, valid resident-memory readings, scenario markers and GC/boundary-crossing loop identification.
 - A Python report command for comparing captures without changing gameplay, persistence or networking settings.
 
 The first two-process capture cannot establish what a remote client is doing. Measurements from additional clients can be added when needed.
@@ -27,6 +28,8 @@ The diagnostics phase is intended to coexist with BetterNetworking. Queue measur
 - [Measurement scope and interpretation](docs/measurements.md)
 - [Build, installation and capture guide](docs/capture-guide.md)
 - [Validation results and remaining checks](docs/validation.md)
+- [Repeated-test protocol and uncertainty](docs/repeated-tests.md)
+- [Implemented changes](CHANGELOG.md)
 - [Development rules](AGENTS.md)
 - [License](LICENSE)
 

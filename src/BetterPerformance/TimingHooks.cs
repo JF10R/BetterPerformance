@@ -27,6 +27,13 @@ namespace BetterPerformance
             Add(harmony, logger, enabled, typeof(ZNet), "SaveWorld", Metric.SaveWorldCall, new[] { typeof(bool) });
             Add(harmony, logger, enabled, typeof(ZNet), "SaveWorldThread", Metric.SaveWorker, Type.EmptyTypes);
             Add(harmony, logger, enabled, typeof(ZDOMan), "PrepareSave", Metric.SavePrepare, Type.EmptyTypes);
+            Add(harmony, logger, enabled, typeof(ZNet), "UpdatePeers", Metric.NetworkPeers, new[] { typeof(float) });
+            Add(harmony, logger, enabled, typeof(ZNet), "UpdateSave", Metric.SaveUpdate, Type.EmptyTypes);
+            Add(harmony, logger, enabled, typeof(ZRpc), "Update", Metric.RpcUpdate, new[] { typeof(float) }, typeof(ZRpc.ErrorCode));
+            Add(harmony, logger, enabled, typeof(ZNetScene), "CreateObjectsSorted", Metric.ObjectCreateSorted,
+                new[] { typeof(List<ZDO>), typeof(int), typeof(int).MakeByRefType() });
+            Add(harmony, logger, enabled, typeof(ZNetScene), "CreateDistantObjects", Metric.DistantObjectCreate,
+                new[] { typeof(List<ZDO>), typeof(int), typeof(int).MakeByRefType() });
             string readiness = "disabled";
             if (enabled)
             {
@@ -46,7 +53,7 @@ namespace BetterPerformance
         }
 
         private static void Add(Harmony harmony, ManualLogSource logger, bool enabled, Type type,
-            string name, Metric metric, Type[] arguments)
+            string name, Metric metric, Type[] arguments, Type? returnType = null)
         {
             string status = "disabled";
             if (enabled)
@@ -54,7 +61,7 @@ namespace BetterPerformance
                 try
                 {
                     var method = AccessTools.DeclaredMethod(type, name, arguments);
-                    if (method == null || method.ReturnType != typeof(void)) status = "unavailable";
+                    if (method == null || method.ReturnType != (returnType ?? typeof(void))) status = "unavailable";
                     else
                     {
                         Metrics[method] = metric;

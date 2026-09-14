@@ -1,5 +1,14 @@
 # Validation record
 
+### Version 0.1.1 — 2026-09-14 UTC
+
+- Eleven C# tests pass, including native resident-memory availability, marker validation and phase-boundary identification.
+- Ten Python tests pass, including paired run uncertainty, incomplete/duplicate comparison rejection, strict stall thresholds and invalid-memory reporting.
+- Release compilation succeeds against local Valheim 1.0.12 client and dedicated-server references with zero compiler warnings/errors.
+- Initial isolated runtime verification confirms native memory readings and native Steam telemetry on both roles, including the dedicated Steam interface and ServerSync buffering wrappers.
+- Added probe timings, GC-correlated loop gaps and bounded markers remain observational. No networking, spawning, save or simulation policy is changed.
+- Repeated comparisons use a fixed plugin binary and the [documented protocol](repeated-tests.md). Results will be recorded separately; setup pilots do not count as experimental repetitions.
+
 ### Version 0.1.0 — 2026-09-13
 
 - Nine offline C# tests pass: histogram bounds and invalid samples, concurrent draining, JSON serialization under a non-English locale, bounded queue overflow, writer failure, combined overflow/failure accounting, file-size limits, protection against overwriting existing files, and monotonic clock conversion.
@@ -24,9 +33,9 @@ Static inspection reads assembly metadata without executing the game or the plug
 
 This was a functional measurement test with explicit 30 Hz harness pacing, reduced process priority, two Unity worker threads per process and another game running. It was not a graphics benchmark or a controlled optimization comparison. A first attempt used Classic simulation radius and different pacing; it is not a valid baseline for the corrected Ultra run.
 
-### Known measurement limitation
+### Version 0.1.0 measurement limitation
 
-`process_working_set` returned zero throughout both runtime captures. Treat this field as unavailable on this tested Unity/Mono runtime, not as zero memory consumption. Its collection needs correction and runtime verification before memory analysis. Other process fields require independent validation before using them for optimization decisions.
+`process_working_set` returned zero throughout both 0.1.0 runtime captures. Treat this field as unavailable in those captures, not as zero memory consumption. Version 0.1.1 uses Windows PSAPI and omits failed/zero readings. Other process fields require independent validation before using them for optimization decisions.
 
 ### Not yet validated
 

@@ -1,6 +1,6 @@
 # Capture guide
 
-BetterPerformance 0.1.0 is an experimental diagnostics build. Compilation and offline tests do not establish runtime compatibility or low overhead. It changes no networking settings and contains no BetterNetworking implementation.
+BetterPerformance 0.1.1 is an experimental diagnostics build. Compilation and offline tests do not establish general runtime compatibility or low overhead. It changes no networking settings and contains no BetterNetworking implementation.
 
 ### Build and package
 
@@ -22,11 +22,11 @@ To create a ZIP without installing anything:
 ./scripts/Package.ps1 -ValheimDir 'D:/Steam/steamapps/common/Valheim'
 ```
 
-The package contains one plugin DLL, documentation, the report script, and the project license. It includes no game or BepInEx assemblies.
+The package contains one plugin DLL, documentation, report/comparison scripts, and the project license. It includes no game or BepInEx assemblies.
 
 ### Install when ready to test
 
-With the game and server stopped, copy `BetterPerformance.dll` into each installation's `BepInEx/plugins/BetterPerformance/` directory. BetterNetworking and ValheimPlus can remain installed for this diagnostics phase; runtime coexistence still needs verification.
+With the game and server stopped, copy `BetterPerformance.dll` into each installation's `BepInEx/plugins/BetterPerformance/` directory. BetterNetworking and ValheimPlus can remain installed for this diagnostics phase; see [validation](validation.md) for tested versions and limitations.
 
 The first launch generates `BepInEx/config/jf10r.BetterPerformance.cfg`. Default behavior:
 
@@ -64,8 +64,12 @@ The Markdown report provides timing summaries and the largest observed loop gaps
 
 For overhead checks, compare a repeatable baseline without the plugin, a capture with method timings disabled, and a capture with timings enabled. The self-measured counters are useful but do not include all Harmony dispatch, callback or scheduling costs.
 
+The optional `BetterPerformance.Plugin.Mark("loot_spawn")` API records bounded scenario markers from the Unity main thread. It returns false when unavailable, called from another thread, given an invalid identifier or after 256 markers. It does not send network messages. Use a test harness or another local mod; there is no automatic scenario detection.
+
+`scripts/compare_runs.py` supports the specific three-block comparison described in [the repeated-test protocol](repeated-tests.md). It consumes independent observer JSON, not ordinary capture JSONL. Its run-level uncertainty estimates must not be interpreted as thousands of independent frame-level experiments.
+
 ### Privacy and limitations
 
 Captures remain local and are not uploaded automatically. Routine capture excludes player names/IDs, IP addresses, world names, RPC payloads and save contents. It records game/mod versions, process role, timestamps, settings and aggregate measurements. Review captures before sharing them.
 
-This initial version does not measure GPU time, raw byte throughput, compression ratio, end-to-end action latency, pure disk I/O duration, or another computer's frame times. Network counters that reset game statistics are deliberately not called. See [the metric definitions](measurements.md) before drawing conclusions.
+This version does not measure GPU time, exact packet throughput, compression ratio, end-to-end action latency, pure disk I/O duration, or another computer's frame times. Steam rate estimates cover only its native transport. Network counters that reset game statistics are deliberately not called. See [the metric definitions](measurements.md) before drawing conclusions.

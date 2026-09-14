@@ -69,6 +69,18 @@ class SummaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mismatched"):
             summary.load_capture(self.path)
 
+    def test_native_measurements_and_invalid_memory(self):
+        self.records[1]['gauges'] += [
+            dict(name='process_working_set', value=0),
+            dict(name='steam_pending_reliable', value=120),
+            dict(name='steam_sent_unacked_reliable', value=300),
+        ]
+        self.write()
+        report = summary.summarize([self.path])
+        self.assertIn('Invalid zero/nonpositive working-set', report)
+        self.assertIn('| steam_pending_reliable | 120.000 |', report)
+        self.assertIn('excludes game/mod managed queues', report)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -78,10 +78,23 @@ def summarize(paths):
         totals = {}
         peak_queues = []
         instance_counts = []
+        native = {}
+        memory = []
+        invalid_memory = False
         for record in records:
             if record.get("kind") not in ("interval", "capture_end"):
                 continue
             gauges = named(record.get("gauges", []))
+            resident = gauges.get('process_working_set')
+            if resident is not None:
+                if resident > 0:
+                    memory.append(resident / 1024**2)
+                else:
+                    invalid_memory = True
+            for name in ('steam_pending_reliable', 'steam_pending_unreliable', 'steam_sent_unacked_reliable',
+                         'steam_ping_max', 'steam_queue_time_max', 'steam_in_rate', 'steam_out_rate'):
+                if name in gauges:
+                    native[name] = max(native.get(name, gauges[name]), gauges[name])
             if "reported_send_queue_max" in gauges:
                 peak_queues.append(gauges["reported_send_queue_max"])
             if "scene_instance_count" in gauges:
@@ -114,6 +127,26 @@ def summarize(paths):
         if instance_counts:
             output += [f"Sampled scene instances: {min(instance_counts):g}–{max(instance_counts):g}. "
                        "This is an occupancy range, not a count of creations or removals.", ""]
+        if memory:
+            output += [f"Sampled process working set: {min(memory):.1f}–{max(memory):.1f} MiB (resident memory, not private allocation).", ""]
+        if invalid_memory:
+            output += ["Invalid zero/nonpositive working-set readings were excluded; they do not indicate zero memory usage.", ""]
+        if native:
+            output += ["Native Steam transport maxima; scope excludes game/mod managed queues. "
+                       "Pending and unacknowledged bytes are distinct; ping/queue estimates are not action latency.", "",
+                       "| Signal | Sampled maximum | Unit |", "| --- | ---: | --- |"]
+            for name, value in native.items():
+                unit = 'bytes_per_second' if name.endswith('_rate') else 'ms' if name in ('steam_ping_max', 'steam_queue_time_max') else 'bytes'
+                output.append(f'| {name} | {value:.3f} | {unit} |')
+            output.append('')
+        markers = [record for record in records if record.get('kind') == 'marker']
+        if markers:
+            output += ['Scenario markers (elapsed seconds): ' + ', '.join(
+                f"{cell(named(record.get('labels', [])).get('phase', 'unknown'))}={record['elapsedSeconds']:.3f}" for record in markers) + '.', '']
+        if 'LoopWithGcCollection' in totals:
+            output += ['LoopWithGcCollection is a subset of LoopInterval spanning a detected collection; it is not measured GC pause time.', '']
+        if 'LoopAcrossPhaseBoundary' in totals:
+            output += ['LoopAcrossPhaseBoundary retains gaps spanning scenario markers. Exclude boundary-crossing intervals from phase-specific attribution; whole-run loop totals still include them.', '']
         output += ["Not measured: " + cell(labels.get("unavailable", "see capture metadata")) + ".", ""]
     output += ["### Largest observed loop gaps", "",
                "UTC values mark interval ends, not the exact time of the worst gap. "

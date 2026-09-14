@@ -8,7 +8,9 @@ namespace BetterPerformance.Core
     {
         LoopInterval, NetworkUpdate, ReplicationUpdate, SceneUpdate, ZoneUpdate,
         ObjectCreate, ObjectRemove, SaveWorldCall, SaveWorker, SavePrepare,
-        CollectorPoll, CollectorSnapshot, TimingRecorder
+        CollectorPoll, CollectorSnapshot, TimingRecorder,
+        NetworkPeers, SaveUpdate, RpcUpdate, ObjectCreateSorted, DistantObjectCreate,
+        LoopWithGcCollection, LoopAcrossPhaseBoundary
     }
 
     [DataContract]

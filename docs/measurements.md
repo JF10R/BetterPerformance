@@ -1,6 +1,6 @@
 # Measurement scope
 
-This document describes the experimental 0.1.0 collector and its interpretation limits. Runtime validation remains pending.
+This document describes the experimental 0.1.1 collector and its interpretation limits. See [validation](validation.md) for the tested conditions.
 
 ### Objective
 
@@ -13,8 +13,8 @@ Capture each process separately. A dedicated server running on the same computer
 | Area | Implemented measurements | Interpretation limits |
 | --- | --- | --- |
 | Process and update timing | Plugin Update-to-Update gaps; elapsed method timings; process CPU delta and machine-normalized CPU percentage; working set; managed heap estimate; GC collection deltas | Loop gaps include waiting and scheduling, not just CPU work. Server updates are not rendered frames. Mono GC generations may share underlying collections; do not sum them as independent events. |
-| Networking | Peer count; sum/max of sampled socket queue API results; negative and unavailable result counts | No raw throughput, compression time/ratio or action latency. BetterNetworking can adjust results, including negative values; the collector preserves and labels them. No resetting of game network counters. |
-| Zones and objects | Zone/scene update timings; CreateObjects/RemoveObjects batch timings; scene instance occupancy; false readiness results; effective simulation radius | Readiness counts observe existing calls, not unique failed object spawns. Batch call counts are not object counts. Sampled occupancy is not creation/removal throughput. |
+| Networking | Peer count; adjusted socket queue API results; native Steam pending reliable/unreliable and unacknowledged bytes, estimated rates, ping and queue time; network-peer and RPC update timings | Native counters exclude game/mod managed queues. Steam rates are estimates, not packet capture. No compression time/ratio or action latency. BetterNetworking can adjust socket results, including negative values; the collector preserves them separately. No resetting of game network counters. |
+| Zones and objects | Zone/scene update timings; CreateObjects/RemoveObjects batch timings; sorted and distant creation timings; scene instance occupancy; false readiness results; effective simulation radius | Readiness counts observe existing calls, not unique failed object spawns. Batch call counts are not object counts. Sampled occupancy is not creation/removal throughput. |
 | Saves | ZDOMan.PrepareSave, ZNet.SaveWorld, and ZNet.SaveWorldThread elapsed timings | Timings overlap and must not be summed. SaveWorld can include waiting; SaveWorldThread is not pure disk time. No claim of full end-to-end save duration. |
 | Capture quality | Poll/snapshot/aggregation timings, invalid samples, probe failures, dropped export records, writer time and bytes | Self-measurement excludes some Harmony/callback costs. An external baseline comparison is still required. |
 
@@ -37,6 +37,14 @@ Method timings include nested work and allocations and can include other mods' p
 Snapshot work appears in the next interval; the final snapshot has no successor. `writer_last_write` describes the most recently completed record, not the interval currently being queued. GC and process CPU statistics include BetterPerformance's own work.
 
 Each file uses schema version 1 and contains `start`, `interval`, `capture_end` and `writer_end` JSONL records. Each record contains `labels`, `gauges` with units, and `timings` in milliseconds. The writer completion record reports final drop totals. A missing footer, file-size limit or queue overflow prevents treating the file as a complete capture. Timing percentiles in the report are the worst retained interval bounds, not whole-session percentiles.
+
+Version 0.1.1 adds optional `marker` records. `Plugin.Mark("scenario_name")` is a main-thread-only API accepting at most 48 ASCII letters, digits, underscores or hyphens and 256 markers per capture. The preceding aggregate is flushed before changing the phase label. Calls are still assigned on completion: a background call or loop gap may span a marker. `LoopAcrossPhaseBoundary` identifies those loop gaps without removing them from whole-run totals; exclude intervals containing them from phase-specific attribution. Use predefined scenario labels, never player names or identifiers.
+
+`LoopWithGcCollection` is the subset of loop gaps spanning a change in `GC.CollectionCount(0)`. It is a correlation signal, not GC pause duration. It overlaps `LoopInterval` and possibly `LoopAcrossPhaseBoundary`; do not add these totals.
+
+Resident memory uses Windows PSAPI on Windows to avoid Unity Mono's observed zero `WorkingSet64` results. Other platforms use `Process.WorkingSet64`. Zero/failed readings are omitted and labeled unavailable. Resident memory includes shared pages and is not private allocation. See [Microsoft's API reference](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-getprocessmemoryinfo).
+
+Native Steam sampling calls the client or dedicated-server interface as appropriate. Known ServerSync buffering wrappers are inspected read-only, up to eight layers; unsupported transports remain explicitly unavailable. Pending reliable/unreliable bytes and sent-but-unacknowledged reliable bytes are distinct. Estimated queue time is not action latency; ping may be unavailable or zero on local links. See [Steam's counter definitions](https://partner.steamgames.com/doc/api/Steamnetworkingtypes).
 
 No claim of negligible overhead is made before runtime measurements.
 

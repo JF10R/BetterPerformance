@@ -19,6 +19,20 @@ namespace BetterPerformance
         internal readonly double IntervalSeconds;
         private double previousExport;
         private long readinessChecks, readinessFalse, probeFailures;
+        internal string Phase = "unmarked";
+        internal int MarkerCount;
+        internal long LastMarkerTimestamp;
+
+        internal void Mark(string name)
+        {
+            Phase = name;
+            LastMarkerTimestamp = Stopwatch.GetTimestamp();
+            MarkerCount++;
+            Writer.TryWrite(new CaptureRecord {
+                Kind = "marker", CaptureId = Id, Utc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+                ElapsedSeconds = Elapsed, Labels = new[] { new TextValue("phase", name) }
+            });
+        }
 
         internal CaptureSession(string directory, string role, double duration, double interval, int capacity,
             long maxBytes, List<TextValue> metadata)
@@ -60,6 +74,7 @@ namespace BetterPerformance
         {
             long started = Stopwatch.GetTimestamp();
             double elapsed = Elapsed;
+            labels.Add(new TextValue("phase", Phase));
             gauges.Add(new NumberValue("zone_readiness_checks", Interlocked.Exchange(ref readinessChecks, 0), "calls"));
             gauges.Add(new NumberValue("zone_not_ready_results", Interlocked.Exchange(ref readinessFalse, 0), "calls"));
             gauges.Add(new NumberValue("probe_failures_total", Interlocked.Read(ref probeFailures), "count"));
