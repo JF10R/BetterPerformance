@@ -22,6 +22,12 @@ class ComparisonTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 comparison.paired_estimate(baseline, candidate)
 
+    def test_two_run_uncertainty_is_wide(self):
+        estimate = comparison.paired_estimate([10, 20], [12, 24])
+        self.assertEqual(estimate['n'], 2)
+        self.assertEqual(estimate['mean_delta'], 3)
+        self.assertAlmostEqual(estimate['ci95'][0], 3 - 12.7062047364)
+
     def test_run_metrics_threshold_and_quantile(self):
         metrics = comparison.run_metrics([10, 20, 30, 50, 100])
         self.assertEqual(metrics['max_loop_ms'], 100)

@@ -9,7 +9,7 @@ Neither comparison tests a new gameplay optimization. BetterNetworking 2.3.3 sta
 
 ### Conditions
 
-Three blocks, each containing these arms:
+The original protocol planned three blocks, each containing these arms:
 
 | Arm | Diagnostics | Simulation |
 | --- | --- | --- |
@@ -18,6 +18,8 @@ Three blocks, each containing these arms:
 | `new_classic` | 0.1.1 | Near 2, far extension 2, Classic |
 
 Execution order is rotated: new Ultra / old Ultra / new Classic; old Ultra / new Classic / new Ultra; new Classic / new Ultra / old Ultra. This reduces simple position effects but does not eliminate drift or random simulation differences.
+
+During execution, the user requested fewer restarts and a prolonged session. Two complete blocks were retained (six process-pair runs); the third was canceled. A separate ten-minute Ultra workload was then requested in one continuous session. Its windows are descriptive observations within one session, not additional independent repetitions for the comparison. The change was made for that operational preference, not because a significance threshold was reached.
 
 Each process pair receives a fresh copy of the same temporary-world fixture and character. The fixture contains some previously generated areas. It is not a developed production world, and restored files do not guarantee deterministic AI, scheduling, terrain-loading caches or network traffic. Initial state, plugin DLL hashes and configurations must be checked before accepting the results.
 
@@ -29,11 +31,11 @@ After joining with the cloned temporary character, wait 15 seconds, spawn 32 Woo
 
 A separate, unchanged QA observer records loop gaps into a bounded 12,000-element buffer in every arm, writing once after the workload. The server starts/stops its observer when it sees local control markers, so its boundaries are approximate and can differ by a frame or a stall. No frame gap is treated as an independent experimental repetition.
 
-The comparison script requires all 18 observer files: two roles, three arms and three blocks. It rejects duplicates, incomplete designs, truncated buffers and nonpositive/nonfinite loop samples. Fields are `Role` (`client`/`server`), `Variant` (table above), `Block` (1–3), `FramesMs` (positive millisecond samples) and `Truncated` (false). QA files also include UTC boundaries and scenario markers; the experiment record verifies these separately.
+The comparison script requires either 12 or 18 observer files: two roles, three arms and two or three complete blocks. It rejects duplicates, incomplete designs, truncated buffers and nonpositive/nonfinite loop samples. Fields are `Role` (`client`/`server`), `Variant` (table above), `Block` (1–2 or 1–3), `FramesMs` (positive millisecond samples) and `Truncated` (false). QA files also include UTC boundaries and scenario markers; the experiment record verifies these separately.
 
 Run-level metrics are mean loop gap, nearest-rank p95, maximum gap and gaps over 50 ms per observed minute. The primary stall indicator is gaps over 50 ms per minute; other metrics help interpretation. Averages near 33 ms largely reflect the explicit frame pacing.
 
-For each block, subtract baseline from candidate. Report the mean difference, observed difference range and an exploratory 95% paired Student t interval: mean difference ± 4.3026527299 × sample standard deviation of the three differences / sqrt(3). With only two degrees of freedom and unverified normality/independence, these intervals are weak evidence and often wide. They are not corrected for multiple metrics. An interval crossing zero supports an inconclusive result, not proof of no overhead. Repeating under different workloads and with more blocks is necessary before broad claims.
+For each block, subtract baseline from candidate. Report the mean difference, observed difference range and an exploratory 95% paired Student t interval: mean difference ± critical value × sample standard deviation of the differences / sqrt(n). The critical value is 12.7062047364 for two pairs (df=1), or 4.3026527299 for three pairs (df=2). With so few degrees of freedom and unverified normality/independence, these intervals are weak evidence and often wide. They are not corrected for multiple metrics. An interval crossing zero supports an inconclusive result, not proof of no overhead. Repeating under different workloads and with more blocks is necessary before broad claims.
 
 The earlier single random-world capture is an exploratory reference only. Different pacing, routes, loading state and duration prevent a valid numerical before/after claim against it.
 

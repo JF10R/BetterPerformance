@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare three paired repetitions per arm from an independent loop observer."""
+"""Compare two or three paired repetitions per arm from an independent loop observer."""
 
 import argparse
 import json
@@ -22,15 +22,17 @@ def run_metrics(frames):
 
 
 def paired_estimate(baseline, candidate):
-    # This protocol has three complete blocks. Frames are not independent repeats.
-    if len(baseline) != 3 or len(candidate) != 3 or any(
+    # Frames and repeated windows within one process are not independent repeats.
+    n = len(baseline)
+    if n not in (2, 3) or len(candidate) != n or any(
             not math.isfinite(x) for x in baseline + candidate):
-        raise ValueError('Expected exactly three finite paired run values.')
+        raise ValueError('Expected two or three finite paired run values.')
     differences = [after - before for before, after in zip(baseline, candidate)]
     mean = statistics.mean(differences)
-    # Two-sided Student t critical value, 95%, df = 2. Exploratory assumption only.
-    margin = 4.3026527299 * statistics.stdev(differences) / math.sqrt(3)
-    return dict(n=3, mean_delta=mean, range=[min(differences), max(differences)],
+    # Two-sided Student t critical values, 95%, df = n - 1. Exploratory only.
+    critical = {2: 12.7062047364, 3: 4.3026527299}[n]
+    margin = critical * statistics.stdev(differences) / math.sqrt(n)
+    return dict(n=n, mean_delta=mean, range=[min(differences), max(differences)],
                 ci95=[mean - margin, mean + margin])
 
 
@@ -43,20 +45,25 @@ def index_records(records):
         if record.get('Truncated', True):
             raise ValueError('Truncated observer output is not comparable.')
         indexed[key] = run_metrics(record['FramesMs'])
-    expected = {(role, arm, block) for role in ('client', 'server') for arm in ARMS for block in (1, 2, 3)}
+    blocks = sorted({key[2] for key in indexed})
+    if blocks not in ([1, 2], [1, 2, 3]):
+        raise ValueError('Incomplete design: require two or three contiguous blocks.')
+    expected = {(role, arm, block) for role in ('client', 'server') for arm in ARMS for block in blocks}
     if set(indexed) != expected:
-        raise ValueError('Incomplete or unexpected design; require both roles, three arms and three blocks.')
+        raise ValueError('Incomplete or unexpected design; require both roles and all three arms in every block.')
     return indexed
 
 
 def compare(paths):
     indexed = index_records([json.loads(Path(path).read_text(encoding='utf-8-sig')) for path in paths])
+    blocks = sorted({key[2] for key in indexed})
+    n = len(blocks)
     lines = ['# Repeated measurement comparison', '',
-             'Three runs per arm. Values come from the same independent loop observer in every arm. '
+             f'{n} runs per arm. Values come from the same independent loop observer in every arm. '
              'Each run, not each frame, is one repetition. Lower values indicate fewer/shorter loop stalls.', '',
              'Candidate minus baseline: a negative difference favors the candidate. '
-             '95% intervals use paired Student t estimates with only two degrees of freedom. '
-             'They assume approximately normal, independent block differences; with three blocks this cannot be verified. '
+             f'95% intervals use paired Student t estimates with df={n - 1}. '
+             'They assume approximately normal, independent block differences; with this small sample this cannot be verified. '
              'Treat them as exploratory uncertainty estimates, not proof of equivalence or general performance gains.', '']
     for role in ('client', 'server'):
         lines += [f'### {role}: run-level observations', '',
@@ -64,15 +71,15 @@ def compare(paths):
                   '| --- | --- | ---: | ---: | ---: |']
         for arm in ARMS:
             for metric in METRICS:
-                values = [indexed[role, arm, block][metric] for block in (1, 2, 3)]
+                values = [indexed[role, arm, block][metric] for block in blocks]
                 lines.append(f'| {arm} | {metric} | {statistics.mean(values):.3f} | {min(values):.3f} | {max(values):.3f} |')
         for baseline, candidate in (('old_ultra', 'new_ultra'), ('new_ultra', 'new_classic')):
             lines += ['', f'### {role}: {candidate} minus {baseline}', '',
                       '| Metric | Mean difference | Paired difference range | Exploratory 95% interval |',
                       '| --- | ---: | ---: | ---: |']
             for metric in METRICS:
-                before = [indexed[role, baseline, block][metric] for block in (1, 2, 3)]
-                after = [indexed[role, candidate, block][metric] for block in (1, 2, 3)]
+                before = [indexed[role, baseline, block][metric] for block in blocks]
+                after = [indexed[role, candidate, block][metric] for block in blocks]
                 estimate = paired_estimate(before, after)
                 low, high = estimate['ci95']
                 minimum, maximum = estimate['range']

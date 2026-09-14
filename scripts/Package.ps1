@@ -22,6 +22,7 @@ New-Item -Path $pluginDirectory -ItemType Directory -Force | Out-Null
 # Whitelist our output. Never copy an entire build directory or game references.
 Copy-Item -LiteralPath (Join-Path $repoRoot 'src/BetterPerformance/bin/Release/net472/BetterPerformance.dll') -Destination $pluginDirectory
 Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $stagingPath
+Copy-Item -LiteralPath (Join-Path $repoRoot 'CHANGELOG.md') -Destination $stagingPath
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $stagingPath
 Copy-Item -LiteralPath (Join-Path $repoRoot 'AGENTS.md') -Destination $stagingPath
 Copy-Item -LiteralPath (Join-Path $repoRoot 'docs') -Destination $stagingPath -Recurse

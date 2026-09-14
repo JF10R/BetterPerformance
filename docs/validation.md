@@ -3,11 +3,11 @@
 ### Version 0.1.1 — 2026-09-14 UTC
 
 - Eleven C# tests pass, including native resident-memory availability, marker validation and phase-boundary identification.
-- Ten Python tests pass, including paired run uncertainty, incomplete/duplicate comparison rejection, strict stall thresholds and invalid-memory reporting.
+- Eleven Python tests pass, including two-/three-pair uncertainty, incomplete/duplicate comparison rejection, strict stall thresholds and invalid-memory reporting.
 - Release compilation succeeds against local Valheim 1.0.12 client and dedicated-server references with zero compiler warnings/errors.
 - Initial isolated runtime verification confirms native memory readings and native Steam telemetry on both roles, including the dedicated Steam interface and ServerSync buffering wrappers.
 - Added probe timings, GC-correlated loop gaps and bounded markers remain observational. No networking, spawning, save or simulation policy is changed.
-- Repeated comparisons use a fixed plugin binary and the [documented protocol](repeated-tests.md). Results will be recorded separately; setup pilots do not count as experimental repetitions.
+- Six completed comparison runs and a separate ten-minute continuous workload use the same tested 0.1.1 binary. All 14 captures close without drops. [Results and uncertainty](runtime-results-2026-09-14.md) document the observed adverse overhead signal, limitations and excluded setup pilots.
 
 ### Version 0.1.0 — 2026-09-13
 
@@ -41,7 +41,7 @@ This was a functional measurement test with explicit 30 Hz harness pacing, reduc
 
 - Rendered gameplay, GPU load, remote clients and general mod compatibility.
 - Total collection overhead, long-session behavior and effects on frame/update timing. Self-timed collector sections do not measure the complete instrumentation cost.
-- Controlled comparisons of draw distances, networking changes or other optimizations.
+- Broader controlled comparisons of draw distances, networking changes or other optimizations. The two-pair headless comparison is exploratory and is not a low-overhead certification.
 - Whether any measured bottleneck explains a particular player's delayed actions.
 
 No runtime performance gain is claimed.

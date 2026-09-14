@@ -66,7 +66,7 @@ For overhead checks, compare a repeatable baseline without the plugin, a capture
 
 The optional `BetterPerformance.Plugin.Mark("loot_spawn")` API records bounded scenario markers from the Unity main thread. It returns false when unavailable, called from another thread, given an invalid identifier or after 256 markers. It does not send network messages. Use a test harness or another local mod; there is no automatic scenario detection.
 
-`scripts/compare_runs.py` supports the specific three-block comparison described in [the repeated-test protocol](repeated-tests.md). It consumes independent observer JSON, not ordinary capture JSONL. Its run-level uncertainty estimates must not be interpreted as thousands of independent frame-level experiments.
+`scripts/compare_runs.py` supports the two- or three-block comparison described in [the repeated-test protocol](repeated-tests.md). It consumes independent observer JSON, not ordinary capture JSONL. Its run-level uncertainty estimates must not be interpreted as thousands of independent frame-level experiments.
 
 ### Privacy and limitations
 

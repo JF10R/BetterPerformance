@@ -8,7 +8,7 @@
 - Add network-peer, RPC, save-update, sorted-object and distant-object timing probes.
 - Add bounded scenario markers and identify loop gaps crossing phase boundaries or spanning GC collections.
 - Extend reports with native counters, memory validity and marker interpretation.
-- Add a three-block comparison report with run-level ranges and exploratory paired 95% uncertainty intervals.
+- Add a two- or three-block comparison report with run-level ranges and exploratory paired 95% uncertainty intervals.
 
 Diagnostics only. No spawning, saving, replication, compression or bandwidth behavior changed. BetterNetworking remains a separate optional mod.
 

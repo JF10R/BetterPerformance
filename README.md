@@ -29,6 +29,7 @@ The diagnostics phase is intended to coexist with BetterNetworking. Queue measur
 - [Build, installation and capture guide](docs/capture-guide.md)
 - [Validation results and remaining checks](docs/validation.md)
 - [Repeated-test protocol and uncertainty](docs/repeated-tests.md)
+- [Runtime results, including possible overhead](docs/runtime-results-2026-09-14.md)
 - [Implemented changes](CHANGELOG.md)
 - [Development rules](AGENTS.md)
 - [License](LICENSE)
