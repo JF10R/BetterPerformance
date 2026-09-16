@@ -47,15 +47,9 @@ The initial focus is measuring a client and dedicated server running on the same
 
 The first two-process capture cannot establish what a remote client is doing. Measurements from additional clients can be added when needed.
 
-### Experimental object loading
+### Object loading
 
-An optional soft time budget spreads scene object creation across updates. Separate 0.3.0 options can raise the count allowance while time remains and favor nearby loot within vanilla object-type tiers. Readiness checks, invalid-prefab handling and save/network formats remain in place. It does not change view distance or move Unity work to another thread.
-
-Read the [object-budget guide and experiment](docs/object-budget.md) before enabling it. The module is separate from diagnostics and can be switched off locally during a session after installation at startup. No BetterNetworking implementation is duplicated.
-
-The [loot-scheduling guide](docs/loot-latency.md) describes the independent options and limits. The [0.3.0 measurements](docs/loot-results-2026-09-14.md) document the four-configuration comparison and uncertainty.
-
-The optional [preparation-clock adjustment](docs/budget-preparation.md) gives creation its allowance after the initial near scan/sort, while measuring that preparation separately. It can improve progress when preparation has exhausted the old whole-batch allowance; it can also increase an individual batch's elapsed time.
+An optional soft time budget spreads scene object creation across frames, with a quota that lets more objects through while time remains, a preparation clock that gives creation its allowance after the near scan/sort, and the separate initial-loading acceleration. Readiness checks, invalid-prefab handling, view distance and save/network formats are unchanged. In the 2026-09-15 session the budget yielded in 1.2 % of creation batches: it only binds on the heavy batches (loading, zone crossings), which are the ones that cause hitches, so its value is measured on those events, not on average frames. Guides: [object budget](docs/object-budget.md), [preparation clock](docs/budget-preparation.md), [initial loading](docs/initial-loading.md), [loot scheduling](docs/loot-latency.md) and the [0.3.0 measurements](docs/loot-results-2026-09-14.md).
 
 ### Relationship to other mods
 
