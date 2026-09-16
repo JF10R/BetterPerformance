@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Reflection;
 using BetterPerformance.Core;
 using BepInEx.Logging;
@@ -125,30 +126,10 @@ namespace BetterPerformance
                 Availability.Add(new TextValue("probe.SpawnAttempt", enabled ? "unavailable" : "disabled"));
             }
             AiTelemetry.Install(harmony, logger, enabled);
-            string characterStatus = "disabled";
-            if (enabled)
-            {
-                try
-                {
-                    Type? updater = typeof(ZNet).Assembly.GetType("MonoUpdatersExtra");
-                    Type? item = typeof(ZNet).Assembly.GetType("IMonoUpdater");
-                    if (updater == null || item == null) characterStatus = "unavailable";
-                    else
-                    {
-                        Type list = typeof(List<>).MakeGenericType(item);
-                        var method = AccessTools.DeclaredMethod(updater, "CustomFixedUpdate", new[] { list, list, typeof(string), typeof(float) });
-                        if (method == null || !method.IsStatic || method.ReturnType != typeof(void)) characterStatus = "unavailable";
-                        else
-                        {
-                            harmony.Patch(method, prefix: new HarmonyMethod(typeof(TimingHooks), nameof(CharacterPrefix)),
-                                finalizer: new HarmonyMethod(typeof(TimingHooks), nameof(CharacterFinalizer)));
-                            characterStatus = "enabled";
-                        }
-                    }
-                }
-                catch (Exception exception) { characterStatus = "patch_failed"; logger.LogWarning("Character batch probe unavailable: " + exception.GetType().Name); }
-            }
-            Availability.Add(new TextValue("probe.CharacterFixedBatch", characterStatus));
+            InstallBatch(harmony, logger, enabled, "CustomFixedUpdate", new[] { typeof(string), typeof(float) },
+                FixedBatches, nameof(FixedBatchPrefix), "Fixed-update batch probe");
+            InstallBatch(harmony, logger, enabled, "CustomUpdate", new[] { typeof(string), typeof(float), typeof(float) },
+                UpdateBatches, nameof(UpdateBatchPrefix), "Update batch probe");
             string readiness = "disabled";
             if (enabled)
             {
@@ -166,10 +147,31 @@ namespace BetterPerformance
             }
             Availability.Add(new TextValue("probe.ZoneReadiness", readiness));
             InstallSimulation(harmony, logger, enabled);
+            InstallGameplay(harmony, logger, enabled);
         }
 
         // Late-update batch label supplied by the vanilla MonoUpdaters caller.
         internal const string HeightmapLateBatchName = "MonoUpdaters.LateUpdate.Heightmap";
+
+        // Profiler-scope labels the vanilla MonoUpdaters callers pass. One patch per
+        // dispatch method selects the metric from the label, so a new batch costs a
+        // dictionary entry instead of another prefix/finalizer pair.
+        internal static readonly Dictionary<string, Metric> FixedBatches = new Dictionary<string, Metric>
+        {
+            { "MonoUpdaters.FixedUpdate.Character", Metric.CharacterFixedBatch },
+            { "MonoUpdaters.FixedUpdate.Floating", Metric.FloatingBatch },
+            { "MonoUpdaters.FixedUpdate.Ship", Metric.ShipBatch },
+            { "MonoUpdaters.FixedUpdate.ZSyncTransform", Metric.ZSyncTransformBatch },
+            { "MonoUpdaters.FixedUpdate.ZSyncAnimation", Metric.ZSyncAnimationBatch }
+        };
+
+        internal static readonly Dictionary<string, Metric> UpdateBatches = new Dictionary<string, Metric>
+        {
+            { "MonoUpdaters.Update.CraftingStation", Metric.CraftingStationBatch },
+            { "MonoUpdaters.Update.ZSFX", Metric.SfxBatch },
+            { "MonoUpdaters.Update.InstanceRenderer", Metric.InstanceRendererBatch },
+            { "MonoUpdaters.Update.Smoke", Metric.SmokeBatch }
+        };
 
         // Heightmap and every other IMonoUpdater implementor cannot be type-loaded by a
         // standalone CLR (default interface methods). Resolve them by name so offline
@@ -259,6 +261,174 @@ namespace BetterPerformance
             Add(harmony, logger, enabled, typeof(DungeonGenerator), "Spawn", Metric.DungeonSpawn, Type.EmptyTypes);
         }
 
+        // Gameplay-loop probes: inventory/container interaction, building, map, vehicles,
+        // resource gathering, damage and the single-instance player/HUD frame methods.
+        // Every game type is resolved by name: Player, Character, Humanoid and Ship
+        // implement IMonoUpdater and cannot be type-loaded by a standalone CLR, so a
+        // hard typeof would abort the whole installer during offline verification.
+        private static void InstallGameplay(Harmony harmony, ManualLogSource logger, bool enabled)
+        {
+            Type? gui = Resolve("InventoryGui"), container = Resolve("Container"), inventory = Resolve("Inventory");
+            Type? player = Resolve("Player"), character = Resolve("Character"), humanoid = Resolve("Humanoid");
+            Type? hud = Resolve("Hud"), minimap = Resolve("Minimap"), mapMode = Resolve("Minimap+MapMode");
+            Type? ship = Resolve("Ship"), vagon = Resolve("Vagon");
+            Type? hit = Resolve("HitData"), item = Resolve("ItemDrop+ItemData"), itemDrop = Resolve("ItemDrop");
+            Type? modifier = Resolve("HitData+DamageModifier");
+            Type gameObject = typeof(UnityEngine.GameObject), vector = typeof(UnityEngine.Vector3);
+
+            // Inventory and chests.
+            AddResolved(harmony, logger, enabled, gui, "Update", Metric.InventoryGuiUpdate, Empty);
+            AddResolved(harmony, logger, enabled, gui, "UpdateInventory", Metric.InventoryGridUpdate, new[] { player });
+            AddResolved(harmony, logger, enabled, gui, "UpdateContainer", Metric.ContainerGridUpdate, new[] { player });
+            AddResolved(harmony, logger, enabled, gui, "Show", Metric.InventoryGuiShow, new[] { container, typeof(int) });
+            AddResolved(harmony, logger, enabled, container, "Interact", Metric.ContainerInteract,
+                new[] { humanoid, typeof(bool), typeof(bool) }, typeof(bool));
+            AddResolved(harmony, logger, enabled, container, "OnContainerChanged", Metric.ContainerChanged, Empty);
+            // InvokeRepeating("CheckForChanges", 0, 1): once per second per loaded container,
+            // not per frame, and it carries the inventory deserialization on change.
+            AddResolved(harmony, logger, enabled, container, "CheckForChanges", Metric.ContainerCheckForChanges, Empty);
+            AddResolved(harmony, logger, enabled, inventory, "AddItem", Metric.InventoryAddItem, new[] { item }, typeof(bool));
+            AddResolved(harmony, logger, enabled, inventory, "MoveItemToThis", Metric.InventoryMoveItem,
+                new[] { inventory, item });
+
+            // Building.
+            AddResolved(harmony, logger, enabled, player, "UpdatePlacementGhost", Metric.PlacementGhostUpdate, new[] { typeof(bool) });
+            AddResolved(harmony, logger, enabled, player, "UpdatePlacement", Metric.PlacementUpdate,
+                new[] { typeof(bool), typeof(float) });
+            AddResolved(harmony, logger, enabled, player, "TryPlacePiece", Metric.PiecePlace, new[] { Resolve("Piece") }, typeof(bool));
+            AddResolved(harmony, logger, enabled, hud, "UpdateBuild", Metric.BuildGuiUpdate, new[] { player, typeof(bool) });
+
+            // Map.
+            AddResolved(harmony, logger, enabled, minimap, "Update", Metric.MinimapUpdate, Empty);
+            AddResolved(harmony, logger, enabled, minimap, "UpdateExplore", Metric.MinimapExploreUpdate,
+                new[] { typeof(float), player });
+            AddResolved(harmony, logger, enabled, minimap, "UpdateMap", Metric.MinimapLargeMapUpdate,
+                new[] { player, typeof(float), typeof(bool) });
+            AddResolved(harmony, logger, enabled, minimap, "SetMapMode", Metric.MinimapSetMapMode, new[] { mapMode });
+
+            // Vehicles. Vagon has no FixedUpdate or CustomFixedUpdate in this build.
+            AddResolved(harmony, logger, enabled, ship, "CustomFixedUpdate", Metric.ShipFixedUpdate, new[] { typeof(float) });
+            AddResolved(harmony, logger, enabled, vagon, "Update", Metric.VagonUpdate, Empty);
+            AddResolved(harmony, logger, enabled, vagon, "AttachTo", Metric.VagonAttach, new[] { gameObject });
+            AddResolved(harmony, logger, enabled, vagon, "Detach", Metric.VagonDetach, Empty);
+
+            // Resource gathering and combat.
+            AddResolved(harmony, logger, enabled, Resolve("TreeBase"), "RPC_Damage", Metric.TreeDamage, new[] { typeof(long), hit });
+            AddResolved(harmony, logger, enabled, Resolve("TreeBase"), "SpawnLog", Metric.TreeSpawnLog, new[] { vector });
+            AddResolved(harmony, logger, enabled, Resolve("TreeLog"), "RPC_Damage", Metric.TreeLogDamage, new[] { typeof(long), hit });
+            AddResolved(harmony, logger, enabled, Resolve("TreeLog"), "Destroy", Metric.TreeLogDestroy, new[] { hit, typeof(bool) });
+            AddResolved(harmony, logger, enabled, Resolve("MineRock5"), "RPC_Damage", Metric.MineRockDamage,
+                new[] { typeof(long), hit, typeof(int) });
+            AddResolved(harmony, logger, enabled, Resolve("MineRock5"), "DamageArea", Metric.MineRockDamageArea,
+                new[] { typeof(int), hit }, typeof(bool));
+            AddResolved(harmony, logger, enabled, Resolve("Destructible"), "RPC_Damage", Metric.DestructibleDamage,
+                new[] { typeof(long), hit });
+            AddResolved(harmony, logger, enabled, Resolve("Destructible"), "Destroy", Metric.DestructibleDestroy, new[] { hit });
+            AddResolved(harmony, logger, enabled, Resolve("WearNTear"), "RPC_Damage", Metric.WearDamage, new[] { typeof(long), hit });
+            AddResolved(harmony, logger, enabled, character, "RPC_Damage", Metric.CharacterDamage, new[] { typeof(long), hit });
+            AddResolved(harmony, logger, enabled, character, "ApplyDamage", Metric.CharacterApplyDamage,
+                new[] { hit, typeof(bool), typeof(bool), modifier });
+            // Attack.Start takes a Rigidbody, which this plugin does not reference. The name
+            // is unique on the type, so the overload is pinned by arity and return type.
+            AddByName(harmony, logger, enabled, Resolve("Attack"), "Start", Metric.AttackStart, 9, typeof(bool),
+                humanoid, Resolve("ZSyncAnimation"), Resolve("CharacterAnimEvent"), Resolve("VisEquipment"), item);
+            AddResolved(harmony, logger, enabled, Resolve("Piece"), "DropResources", Metric.PieceDropResources, new[] { hit });
+            AddResolved(harmony, logger, enabled, Resolve("DropOnDestroyed"), "OnDestroyed", Metric.DropTableDrop, Empty);
+
+            // Stations.
+            AddResolved(harmony, logger, enabled, Resolve("Smelter"), "Spawn", Metric.SmelterSpawn,
+                new[] { typeof(string), typeof(int) });
+
+            // Items. Both run from InvokeRepeating on a 10 second period per dropped item.
+            AddResolved(harmony, logger, enabled, itemDrop, "SlowUpdate", Metric.ItemDropSlowUpdate, Empty);
+            AddResolved(harmony, logger, enabled, itemDrop, "AutoStackItems", Metric.ItemAutoStack, Empty);
+            AddResolved(harmony, logger, enabled, Resolve("Pickable"), "Interact", Metric.PickableInteract,
+                new[] { humanoid, typeof(bool), typeof(bool) }, typeof(bool));
+
+            // Player and per-frame singletons.
+            AddResolved(harmony, logger, enabled, player, "Update", Metric.PlayerUpdate, Empty);
+            AddResolved(harmony, logger, enabled, player, "FixedUpdate", Metric.PlayerFixedUpdate, Empty);
+            AddResolved(harmony, logger, enabled, hud, "Update", Metric.HudUpdate, Empty);
+            AddResolved(harmony, logger, enabled, Resolve("ClutterSystem"), "LateUpdate", Metric.ClutterLateUpdate, Empty);
+            AddResolved(harmony, logger, enabled, Resolve("WaterVolume"), "StaticUpdate", Metric.WaterStaticUpdate, Empty);
+        }
+
+        private static readonly Type?[] Empty = new Type?[0];
+
+        // A null owner or parameter type means the standalone CLR could not load it;
+        // report unavailable rather than guessing a signature.
+        private static void AddResolved(Harmony harmony, ManualLogSource logger, bool enabled, Type? owner,
+            string name, Metric metric, Type?[] arguments, Type? returnType = null)
+        {
+            if (owner == null || Array.IndexOf(arguments, null) >= 0) { Unavailable(enabled, metric); return; }
+            Type[] resolved = new Type[arguments.Length];
+            for (int i = 0; i < arguments.Length; i++) resolved[i] = arguments[i]!;
+            Add(harmony, logger, enabled, owner, name, metric, resolved, returnType);
+        }
+
+        // Pins a uniquely named overload by arity and return type when one of its parameter
+        // types cannot be referenced from this assembly. The required types still gate it.
+        private static void AddByName(Harmony harmony, ManualLogSource logger, bool enabled, Type? owner,
+            string name, Metric metric, int parameters, Type? returnType, params Type?[] required)
+        {
+            if (owner == null || Array.IndexOf(required, null) >= 0) { Unavailable(enabled, metric); return; }
+            string status = "disabled";
+            if (enabled)
+            {
+                try
+                {
+                    var matches = owner.GetMethods(AccessTools.all).Where(m => m.Name == name && m.DeclaringType == owner).ToArray();
+                    var method = matches.Length == 1 ? matches[0] : null;
+                    if (method == null || method.GetParameters().Length != parameters ||
+                        method.ReturnType != (returnType ?? typeof(void))) status = "unavailable";
+                    else
+                    {
+                        Metrics[method] = metric;
+                        harmony.Patch(method, prefix: new HarmonyMethod(typeof(TimingHooks), nameof(Prefix)),
+                            finalizer: new HarmonyMethod(typeof(TimingHooks), nameof(Finalizer)));
+                        status = "enabled";
+                    }
+                }
+                catch (Exception exception) { status = "patch_failed"; logger.LogWarning("Probe " + metric + " unavailable: " + exception.GetType().Name); }
+            }
+            Availability.Add(new TextValue("probe." + metric, status));
+        }
+
+        // One prefix/finalizer pair per MonoUpdaters dispatch method; the profiler-scope
+        // string selects the metric.
+        private static void InstallBatch(Harmony harmony, ManualLogSource logger, bool enabled, string name,
+            Type[] trailing, Dictionary<string, Metric> names, string prefix, string label)
+        {
+            string status = "disabled";
+            if (enabled)
+            {
+                try
+                {
+                    Type? updater = typeof(ZNet).Assembly.GetType("MonoUpdatersExtra");
+                    Type? item = typeof(ZNet).Assembly.GetType("IMonoUpdater");
+                    if (updater == null || item == null) status = "unavailable";
+                    else
+                    {
+                        Type list = typeof(List<>).MakeGenericType(item);
+                        var arguments = new Type[2 + trailing.Length];
+                        arguments[0] = list;
+                        arguments[1] = list;
+                        Array.Copy(trailing, 0, arguments, 2, trailing.Length);
+                        var method = AccessTools.DeclaredMethod(updater, name, arguments);
+                        if (method == null || !method.IsStatic || method.ReturnType != typeof(void)) status = "unavailable";
+                        else
+                        {
+                            harmony.Patch(method, prefix: new HarmonyMethod(typeof(TimingHooks), prefix),
+                                finalizer: new HarmonyMethod(typeof(TimingHooks), nameof(BatchFinalizer)));
+                            status = "enabled";
+                        }
+                    }
+                }
+                catch (Exception exception) { status = "patch_failed"; logger.LogWarning(label + " unavailable: " + exception.GetType().Name); }
+            }
+            foreach (Metric metric in names.Values) Availability.Add(new TextValue("probe." + metric, status));
+        }
+
         private static void InstallHeightmapLateBatch(Harmony harmony, ManualLogSource logger, bool enabled)
         {
             string status = "disabled";
@@ -315,6 +485,8 @@ namespace BetterPerformance
         {
             internal CaptureSession? Session;
             internal long Started;
+            // Only the batch probes use this; the per-method finalizer reads the registry.
+            internal Metric Metric;
         }
 
         private static void Prefix(out TimingState __state)
@@ -323,17 +495,26 @@ namespace BetterPerformance
             __state = new TimingState { Session = session, Started = session == null ? 0 : Stopwatch.GetTimestamp() };
         }
 
-        private static void CharacterPrefix(string __2, out TimingState __state)
+        private static void FixedBatchPrefix(string __2, out TimingState __state)
         {
             __state = default;
-            if (__2 == "MonoUpdaters.FixedUpdate.Character") Prefix(out __state);
+            if (__2 != null && FixedBatches.TryGetValue(__2, out Metric metric))
+            { Prefix(out __state); __state.Metric = metric; }
         }
 
-        // Inclusive character dispatch (movement/grounding/etc.), not the physics solver.
-        private static void CharacterFinalizer(TimingState __state, Exception? __exception)
+        private static void UpdateBatchPrefix(string __2, out TimingState __state)
+        {
+            __state = default;
+            if (__2 != null && UpdateBatches.TryGetValue(__2, out Metric metric))
+            { Prefix(out __state); __state.Metric = metric; }
+        }
+
+        // Inclusive dispatch of one MonoUpdaters group (character movement/grounding, ship
+        // buoyancy, transform sync and so on), not the physics solver and not exclusive CPU.
+        private static void BatchFinalizer(TimingState __state, Exception? __exception)
         {
             if (__state.Session == null) return;
-            try { __state.Session.Book.Record(Metric.CharacterFixedBatch,
+            try { __state.Session.Book.Record(__state.Metric,
                 (Stopwatch.GetTimestamp() - __state.Started) * 1000.0 / Stopwatch.Frequency, __exception != null); }
             catch { __state.Session.RecordProbeFailure(); }
         }

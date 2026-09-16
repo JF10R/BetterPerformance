@@ -486,6 +486,7 @@ def summarize(paths):
         output += engine_report(records)
         output += host_network_report(records)
         output += ownership_report(records)
+        output += gameplay_report(records)
         if loot_statuses:
             output += ['Loot queue probe status: ' + cell(', '.join(sorted(loot_statuses))) + '.', '']
         output += ["Not measured: " + cell(labels.get("unavailable", "see capture metadata")) + ".", ""]
@@ -928,6 +929,113 @@ def ownership_report(records):
                    'activity, so these are lower bounds.', '']
     skips = summed(windows, 'ownership_other_thread_skips')
     failures = summed(windows, 'ownership_probe_failures')
+    if skips is not None or failures is not None:
+        output += [f'Off-thread skips: {f"{skips:g}" if skips is not None else "unobserved"}; '
+                   f'probe failures: {f"{failures:g}" if failures is not None else "unobserved"}. '
+                   'Skipped observations are unmeasured calls, not zero calls.', '']
+    return output
+
+
+GAMEPLAY_GROUPS = (
+    ('Chests and inventory', ('container_open_requests_received', 'container_concurrent_open_conflicts',
+                              'container_open_granted', 'container_open_requests_rejected_in_use',
+                              'container_changes', 'container_gui_open_frames', 'inventory_gui_open_frames',
+                              'inventory_moves', 'inventory_item_stacks')),
+    ('Stations', ('smelter_updates', 'smelter_catchup_items_sum', 'smelter_spawns', 'fireplace_fuel_adds',
+                  'cooking_spawns', 'beehive_extracts')),
+    ('Building', ('placement_ghost_updates', 'placement_ghost_frames', 'pieces_placed', 'pieces_removed')),
+    ('Gathering and combat', ('tree_damage_rpcs', 'tree_logs_spawned', 'rock_damage_rpcs', 'rock_area_destroys',
+                              'destructible_destroys', 'attacks_started', 'hits_dealt',
+                              'drop_on_destroyed_events', 'drops_spawned')),
+    ('Map', ('minimap_explore_updates', 'minimap_explore_scans', 'minimap_fog_applies',
+             'minimap_fog_pixels_explored', 'minimap_large_map_frames')),
+    ('Vehicles and items', ('gameplay_observed_frames', 'player_on_ship_frames', 'item_drops_autostacked',
+                            'item_drop_slow_updates')),
+)
+
+GAMEPLAY_PEAKS = ('inventory_items_max', 'smelter_catchup_items_max', 'ship_instances_max',
+                  'vagon_instances_max', 'zsfx_instances_max')
+
+GAMEPLAY_TIMINGS = ('InventoryGuiUpdate', 'InventoryGridUpdate', 'ContainerGridUpdate', 'InventoryGuiShow',
+                    'ContainerInteract', 'ContainerChanged', 'ContainerCheckForChanges', 'InventoryAddItem',
+                    'InventoryMoveItem', 'PlacementGhostUpdate', 'PlacementUpdate', 'PiecePlace',
+                    'BuildGuiUpdate', 'MinimapUpdate', 'MinimapExploreUpdate', 'MinimapLargeMapUpdate',
+                    'MinimapSetMapMode', 'ShipFixedUpdate', 'VagonFixedUpdate', 'TreeDamage', 'TreeLogDamage',
+                    'TreeDestroy', 'MineRockDamage', 'MineRockDamageArea', 'DestructibleDamage',
+                    'DestructibleDestroy', 'WearDamage', 'CharacterDamage', 'CharacterApplyDamage',
+                    'AttackStart', 'PieceDropResources', 'DropTableDrop', 'SmelterSpawn', 'CraftingStationBatch',
+                    'SfxBatch', 'InstanceRendererBatch', 'SmokeBatch', 'FloatingBatch', 'ShipBatch',
+                    'ZSyncTransformBatch', 'ZSyncAnimationBatch', 'ItemDropSlowUpdate', 'ItemAutoStack',
+                    'PickableInteract', 'PlayerUpdate', 'HudUpdate', 'ClutterLateUpdate', 'WaterStaticUpdate')
+
+
+def gameplay_timings(records):
+    """Per-metric totals for the gameplay call sites, in declaration order."""
+    order = {name: index for index, name in enumerate(GAMEPLAY_TIMINGS)}
+    totals = {}
+    for record in records:
+        if record.get('kind') not in ('interval', 'capture_end'):
+            continue
+        for timing in record.get('timings') or []:
+            if timing.get('name') not in order:
+                continue
+            row = totals.setdefault(timing['name'], {'count': 0, 'sum': 0.0, 'max': 0.0, 'stalls': 0})
+            row['count'] += timing.get('count', 0) or 0
+            row['sum'] += timing.get('sumMs', 0) or 0
+            maximum = timing.get('maxMs', 0) or 0
+            row['max'] = max(row['max'], maximum)
+            row['stalls'] += timing.get('stallsOver50Ms', 0) or 0
+    return sorted(((name, row) for name, row in totals.items() if row['count']), key=lambda item: order[item[0]])
+
+
+def gameplay_report(records):
+    windows = observed_windows(records)
+    groups = [(title, [(name, summed(windows, name)) for name in names]) for title, names in GAMEPLAY_GROUPS]
+    groups = [(title, [(name, value) for name, value in rows if value is not None]) for title, rows in groups]
+    groups = [(title, rows) for title, rows in groups if rows]
+    peaks = [(name, extent(windows, name)) for name in GAMEPLAY_PEAKS]
+    peaks = [(name, span) for name, span in peaks if span is not None]
+    timings = gameplay_timings(records)
+    statuses = label_values(windows, 'gameplay_telemetry_status')
+    if not (groups or peaks or timings or statuses):
+        return []
+    output = ['### Gameplay', '',
+              'Per-interval counters summed across retained windows, and sizes read at poll time. '
+              'Counters are observed calls, not complete coverage of the activity they name: a zero means '
+              'nothing was observed, never that nothing happened. Frame gauges count only frames in which the '
+              'observed per-frame method ran, so they are not a frame-rate denominator.', '']
+    if statuses:
+        output += ['Probe status: ' + cell(', '.join(sorted(set(statuses)))) + '.', '']
+    for name in ('gameplay_probes_unavailable', 'gameplay_skipped_counters'):
+        values = [value for value in label_values(windows, name) if value and value != 'none']
+        if values:
+            output += [name.replace('_', ' ').capitalize() + ': ' + cell('; '.join(values)) + '.', '']
+    if groups:
+        output += ['| Counter | Observed total |', '| --- | ---: |']
+        for title, rows in groups:
+            output.append(f'| **{cell(title)}** | |')
+            output += [f'| {cell(name)} | {exact(value)} |' for name, value in rows]
+        output.append('')
+    if peaks:
+        output += ['| Sampled size | Minimum | Maximum |', '| --- | ---: | ---: |']
+        output += [f'| {cell(name)} | {exact(low)} | {exact(high)} |' for name, (low, high) in peaks]
+        output += ['', 'Occupancy and queue sizes read at poll time, not creations, removals or throughput. '
+                   'A poll can miss a peak between two windows, so these are lower bounds.', '']
+    if timings:
+        output += ['Elapsed time at the same call sites. Inclusive and not summable across rows; nested rows '
+                   'overlap, and a batch row contains the per-object rows it drives.', '',
+                   '| Call site | Calls | Sum ms | Max ms | >50 ms |', '| --- | ---: | ---: | ---: | ---: |']
+        output += [f'| {cell(name)} | {exact(row["count"])} | {row["sum"]:.3f} | '
+                   f'{row["max"]:.3f} | {exact(row["stalls"])} |' for name, row in timings]
+        output.append('')
+    conflicts = summed(windows, 'container_concurrent_open_conflicts')
+    received = summed(windows, 'container_open_requests_received')
+    if conflicts is not None and received is not None:
+        output += [f'Chest open requests reaching an owner: {exact(received)}; refused because the chest was '
+                   f'already in use: {exact(conflicts)}. Conflicts are counted where the owning client handled '
+                   'the request, so a capture from one machine sees only its own share.', '']
+    skips = summed(windows, 'gameplay_other_thread_skips')
+    failures = summed(windows, 'gameplay_probe_failures')
     if skips is not None or failures is not None:
         output += [f'Off-thread skips: {f"{skips:g}" if skips is not None else "unobserved"}; '
                    f'probe failures: {f"{failures:g}" if failures is not None else "unobserved"}. '

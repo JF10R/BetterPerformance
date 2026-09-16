@@ -54,7 +54,7 @@ class NewTelemetrySummaryTests(unittest.TestCase):
     def test_old_schema_capture_renders_exactly_as_before(self):
         report = self.render()
         for heading in ("### Base simulation", "### Attribution", "### Engine markers",
-                        "### Host and network path", "### Ownership and replication"):
+                        "### Host and network path", "### Ownership and replication", "### Gameplay"):
             self.assertNotIn(heading, report)
         self.assertIn("| LoopInterval | 10 | 20.000 | 80.000 |", report)
         self.assertIn("### Largest observed loop gaps", report)
@@ -247,12 +247,117 @@ class NewTelemetrySummaryTests(unittest.TestCase):
     def test_ownership_section_absent_without_ownership_fields(self):
         self.assertNotIn("### Ownership and replication", self.render())
 
+    # --- gameplay counters -----------------------------------------------------
+
+    def test_gameplay_counters_sum_per_interval_and_group_by_surface(self):
+        self.records[1]["gauges"] = gauges(container_open_requests_received=4,
+                                           container_concurrent_open_conflicts=1,
+                                           container_open_granted=3, container_changes=7,
+                                           pieces_placed=2, tree_damage_rpcs=5,
+                                           minimap_fog_applies=1, gameplay_observed_frames=600,
+                                           gameplay_other_thread_skips=0, gameplay_probe_failures=0)
+        self.records[2]["gauges"] = gauges(container_open_requests_received=2,
+                                           container_concurrent_open_conflicts=1,
+                                           container_open_granted=1, container_changes=3,
+                                           pieces_placed=1, tree_damage_rpcs=4,
+                                           minimap_fog_applies=2, gameplay_observed_frames=550)
+        self.records[1]["labels"] = labels(gameplay_telemetry_status="installed")
+        report = self.render()
+        self.assertIn("### Gameplay", report)
+        self.assertIn("Probe status: installed.", report)
+        self.assertIn("| **Chests and inventory** | |", report)
+        self.assertIn("| container_open_requests_received | 6 |", report)
+        self.assertIn("| container_concurrent_open_conflicts | 2 |", report)
+        self.assertIn("| container_changes | 10 |", report)
+        self.assertIn("| **Building** | |", report)
+        self.assertIn("| pieces_placed | 3 |", report)
+        self.assertIn("| tree_damage_rpcs | 9 |", report)
+        self.assertIn("| minimap_fog_applies | 3 |", report)
+        self.assertIn("| gameplay_observed_frames | 1150 |", report)
+        self.assertIn("Chest open requests reaching an owner: 6; refused because the chest was "
+                      "already in use: 2.", report)
+        self.assertIn("Off-thread skips: 0; probe failures: 0.", report)
+        self.assertIn("not a frame-rate denominator", report)
+        self.no_none_cells(report)
+
+    def test_gameplay_sizes_are_ranges_and_never_summed(self):
+        self.records[1]["gauges"] = gauges(inventory_items_max=12, ship_instances_max=2,
+                                           smelter_catchup_items_max=5)
+        self.records[2]["gauges"] = gauges(inventory_items_max=30, ship_instances_max=1,
+                                           smelter_catchup_items_max=0)
+        report = self.render()
+        self.assertIn("| inventory_items_max | 12 | 30 |", report)
+        self.assertIn("| smelter_catchup_items_max | 0 | 5 |", report)
+        self.assertIn("| ship_instances_max | 1 | 2 |", report)
+        self.assertNotIn("| inventory_items_max | 42 |", report)
+        self.assertIn("these are lower bounds", report)
+        self.no_none_cells(report)
+
+    def test_gameplay_timings_render_in_declaration_order_and_skip_absent_metrics(self):
+        self.records[1]["gauges"] = gauges(container_changes=1)
+        self.records[1]["timings"] += [
+            {"name": "PiecePlace", "count": 3, "sumMs": 30, "maxMs": 20,
+             "p95UpperBoundMs": 20, "stallsOver50Ms": 0, "failedCalls": 0},
+            {"name": "InventoryGuiUpdate", "count": 5, "sumMs": 25, "maxMs": 60,
+             "p95UpperBoundMs": 60, "stallsOver50Ms": 1, "failedCalls": 0},
+            {"name": "ShipBatch", "count": 0, "sumMs": 0, "maxMs": 0,
+             "p95UpperBoundMs": 0, "stallsOver50Ms": 0, "failedCalls": 0}]
+        self.records[2]["timings"] = [
+            {"name": "PiecePlace", "count": 1, "sumMs": 5, "maxMs": 5,
+             "p95UpperBoundMs": 5, "stallsOver50Ms": 0, "failedCalls": 0}]
+        report = self.render()
+        section = report[report.index("### Gameplay"):]
+        self.assertIn("| InventoryGuiUpdate | 5 | 25.000 | 60.000 | 1 |", section)
+        self.assertIn("| PiecePlace | 4 | 35.000 | 20.000 | 0 |", section)
+        self.assertNotIn("| ShipBatch |", section)
+        self.assertLess(section.index("| InventoryGuiUpdate |"), section.index("| PiecePlace |"))
+        self.assertIn("not summable across rows", section)
+        self.no_none_cells(report)
+
+    def test_gameplay_section_reports_unavailable_and_skipped_probes(self):
+        self.records[1]["gauges"] = gauges(container_changes=1)
+        self.records[1]["labels"] = labels(gameplay_telemetry_status="partial",
+                                           gameplay_probes_unavailable="smelter:InvalidOperationException",
+                                           gameplay_skipped_counters="container_in_use_max:no_container_instance_list")
+        self.records[2]["labels"] = labels(gameplay_probes_unavailable="none")
+        report = self.render()
+        self.assertIn("Probe status: partial.", report)
+        self.assertIn("Gameplay probes unavailable: smelter:InvalidOperationException.", report)
+        self.assertIn("Gameplay skipped counters: container_in_use_max:no_container_instance_list.", report)
+        self.no_none_cells(report)
+
+    def test_gameplay_section_absent_without_gameplay_fields(self):
+        self.assertNotIn("### Gameplay", self.render())
+
+    def test_gameplay_section_renders_from_timings_alone(self):
+        self.records[1]["timings"] += [
+            {"name": "HudUpdate", "count": 2, "sumMs": 2, "maxMs": 1,
+             "p95UpperBoundMs": 1, "stallsOver50Ms": 0, "failedCalls": 0}]
+        report = self.render()
+        self.assertIn("### Gameplay", report)
+        self.assertIn("| HudUpdate | 2 | 2.000 | 1.000 | 0 |", report)
+        self.assertNotIn("| Counter | Observed total |", report[report.index("### Gameplay"):])
+        self.no_none_cells(report)
+
+    def test_malformed_gameplay_fields_do_not_crash(self):
+        self.records[1]["gauges"] = gauges(container_changes="oops", inventory_items_max=None,
+                                           pieces_placed=3)
+        self.records[2]["gauges"] = gauges(pieces_placed=float("nan"), ship_instances_max="oops")
+        report = self.render()
+        self.assertIn("| pieces_placed | 3 |", report)
+        self.assertNotIn("| container_changes |", report)
+        self.assertNotIn("| ship_instances_max |", report)
+        self.assertNotIn("| inventory_items_max |", report)
+        self.no_none_cells(report)
+
     # --- ordering and robustness -----------------------------------------------
 
     def test_new_sections_precede_the_cross_capture_sections(self):
-        self.records[1]["gauges"] = gauges(zdo_set_owner_calls=1)
+        self.records[1]["gauges"] = gauges(zdo_set_owner_calls=1, container_changes=1)
         report = self.render()
         self.assertLess(report.index("### Ownership and replication"),
+                        report.index("### Gameplay"))
+        self.assertLess(report.index("### Gameplay"),
                         report.index("### Largest observed loop gaps"))
 
     def test_malformed_new_fields_do_not_crash(self):

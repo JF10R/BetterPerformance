@@ -24,7 +24,21 @@ namespace BetterPerformance.Core
         TerrainCompApply, PlantUpdate, SmelterUpdate, FireplaceUpdate, CookingStationUpdate,
         BeehiveUpdate, SapCollectorUpdate, FermenterUpdate, WindmillUpdate,
         LocationSpawn, VegetationPlace, ZoneSpawn, ZonePlaceLocations,
-        DungeonGenerate, DungeonSpawn
+        DungeonGenerate, DungeonSpawn,
+        // Gameplay-loop probes. Appended at the end: histogram order is positional.
+        InventoryGuiUpdate, InventoryGridUpdate, ContainerGridUpdate, InventoryGuiShow,
+        ContainerInteract, ContainerChanged, ContainerCheckForChanges, InventoryAddItem,
+        InventoryMoveItem, PlacementGhostUpdate, PlacementUpdate, PiecePlace, BuildGuiUpdate,
+        MinimapUpdate, MinimapExploreUpdate, MinimapLargeMapUpdate, MinimapSetMapMode,
+        ShipFixedUpdate, VagonUpdate, VagonAttach, VagonDetach,
+        TreeDamage, TreeSpawnLog, TreeLogDamage, TreeLogDestroy,
+        MineRockDamage, MineRockDamageArea, DestructibleDamage, DestructibleDestroy,
+        WearDamage, CharacterDamage, CharacterApplyDamage, AttackStart,
+        PieceDropResources, DropTableDrop, SmelterSpawn,
+        CraftingStationBatch, SfxBatch, InstanceRendererBatch, SmokeBatch,
+        FloatingBatch, ShipBatch, ZSyncTransformBatch, ZSyncAnimationBatch,
+        ItemDropSlowUpdate, ItemAutoStack, PickableInteract,
+        PlayerUpdate, PlayerFixedUpdate, HudUpdate, ClutterLateUpdate, WaterStaticUpdate
     }
 
     [DataContract]

@@ -264,3 +264,5 @@ AttributionGameTests.Run(game, plugin);
 CloudWriteGameTests.Run(game, plugin, managedDirectory);
 ReplicationGameTests.Run(game, plugin);
 TerrainGameTests.Run(game, plugin);
+GameplayGameTests.Run(game, plugin);
+GameplayProbesGameTests.Run(game, plugin);

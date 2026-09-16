@@ -114,7 +114,9 @@ namespace BetterPerformance
                 Utc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
                 ElapsedSeconds = elapsed, IntervalSeconds = elapsed - previousExport,
                 Gauges = gauges.ToArray(), Labels = labels.ToArray(),
-                Timings = final ? Book.CloseAndDrain() : Book.Drain(),
+                // Idle metrics carry no information; omitting them keeps interval records small
+                // as the probe set grows. Readers treat an absent name as zero calls.
+                Timings = Array.FindAll(final ? Book.CloseAndDrain() : Book.Drain(), t => t.Count > 0),
                 ConfigurationChanges = Configurations.Drain(),
                 Attributions = attributions ?? Array.Empty<AttributionSummary>()
             };

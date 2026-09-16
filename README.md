@@ -2,7 +2,7 @@
 
 Performance diagnostics and experimental, measurable optimizations for Valheim clients and dedicated servers.
 
-**Status: experimental plugin, version 0.4.5. Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
+**Status: experimental plugin, version 0.4.6. Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
 
 ### TL;DR: what it improves and who benefits
 
@@ -66,6 +66,7 @@ The diagnostics phase is intended to coexist with BetterNetworking. Queue measur
 - [Report sections added in 0.4.4](docs/report-sections-0.4.4.md)
 - [Diagnostics validation 0.4.4: offline gates and isolated runtime session](docs/diagnostics-validation-0.4.4.md)
 - [Validation 0.4.5: gates, isolated session and what the next session must confirm](docs/validation-0.4.5.md)
+- [Validation 0.4.6: gameplay probes and counters](docs/validation-0.4.6.md)
 - [Play session 2026-09-15: executive report](docs/session-report-2026-09-15.md)
 - [Improvement roadmap after the 2026-09-15 session](docs/improvement-roadmap-2026-09-15.md)
 - [Research: character save and Steam Cloud](docs/character-save-research-2026-09-15.md), [join caches](docs/join-cache-research-2026-09-15.md), [replication of fish, birds and animals](docs/replication-research-2026-09-15.md), [ownership and second-player latency](docs/ownership-latency-research-2026-09-15.md), [terrain regeneration](docs/terrain-regeneration-research-2026-09-15.md), [server, ValheimPlus map sync and host freeze](docs/server-host-research-2026-09-15.md)
@@ -74,6 +75,8 @@ The diagnostics phase is intended to coexist with BetterNetworking. Queue measur
 - [Replication cadence and bird velocity](docs/replication-cadence.md)
 - [Server owner-grant expedite](docs/ownership-expedite.md)
 - [Terrain neighbour-save coalescing](docs/terrain-save-coalescing.md)
+- [Gameplay-loop timing probes](docs/gameplay-telemetry.md) and [gameplay counters](docs/gameplay-counters.md)
+- [Research: shared chest for two players in ValheimPlus](docs/shared-chest-research-2026-09-15.md)
 - [Initial loading acceleration: enable, disable and measure](docs/initial-loading.md)
 - [Why Valheim joining can take 30+ seconds: research reference](docs/valheim-loading-time-analysis.md)
 - [Fast-loading experiments and 0.4.2 diagnostics](docs/fast-join-results-0.4.2.md)

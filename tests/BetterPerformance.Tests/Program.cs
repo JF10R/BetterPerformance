@@ -115,7 +115,7 @@ internal static class Program
         {
             for (int segment = 1; segment <= 2; segment++)
             {
-                var session = new BetterPerformance.CaptureSession(directory, "client", 1800, 2, 16, 32768,
+                var session = new BetterPerformance.CaptureSession(directory, "client", 1800, 2, 16, 131072,
                     new List<TextValue> { new TextValue("recording_session_id", recording),
                         new TextValue("segment_index", segment.ToString(CultureInfo.InvariantCulture)) });
                 paths.Add(session.OutputPath);

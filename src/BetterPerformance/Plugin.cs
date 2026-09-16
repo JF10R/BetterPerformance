@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.5";
+        public const string PluginVersion = "0.4.6";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -137,6 +137,8 @@ namespace BetterPerformance
             ReplicationTelemetry.Enabled = ReplicationTelemetry.Installed;
             TerrainTelemetry.Install(Config, Logger);
             TerrainTelemetry.Enabled = TerrainTelemetry.Installed;
+            GameplayTelemetry.Install(Config, Logger);
+            GameplayTelemetry.Enabled = GameplayTelemetry.Installed;
             GraphicsSettingsManager.GraphicsSettingsChanged += GraphicsSettingsApplied;
             new Terminal.ConsoleCommand("bp_capture", "BetterPerformance: start | stop | status (local process only)",
                 (Terminal.ConsoleEvent)Command);
@@ -320,6 +322,7 @@ namespace BetterPerformance
             ReplicationTelemetry.Reset();
             TerrainSaveCoalescing.Reset();
             TerrainTelemetry.Reset();
+            GameplayTelemetry.Reset();
             RenderTelemetry.Reset();
             EngineTelemetry.Reset();
             current = new CaptureSession(directory,
@@ -359,6 +362,7 @@ namespace BetterPerformance
             ReplicationTelemetry.Sample(gauges, labels);
             TerrainSaveCoalescing.Sample(gauges, labels);
             TerrainTelemetry.Sample(gauges, labels);
+            GameplayTelemetry.Sample(gauges, labels);
             AttributionTelemetry.Sample(gauges, labels);
             LoadingTelemetry.Sample(gauges, labels);
             LoadingDetailsTelemetry.Sample(gauges, labels);
@@ -464,6 +468,8 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { TerrainSaveCoalescing.Sample(gauges, labels); TerrainTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
+            try { GameplayTelemetry.Sample(gauges, labels); }
+            catch { session.RecordProbeFailure(); }
             AttributionSummary[]? finalAttributions = null;
             try { AttributionTelemetry.Sample(gauges, labels); finalAttributions = AttributionTelemetry.Drain(); }
             catch { session.RecordProbeFailure(); }
@@ -506,6 +512,7 @@ namespace BetterPerformance
             ReplicationTelemetry.Uninstall();
             TerrainSaveCoalescing.Uninstall();
             TerrainTelemetry.Uninstall();
+            GameplayTelemetry.Uninstall();
             AttributionTelemetry.Uninstall();
             LoadingTelemetry.Uninstall();
             LoadingDetailsTelemetry.Uninstall();
