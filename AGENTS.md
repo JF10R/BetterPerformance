@@ -20,3 +20,4 @@
 - Record units and distinguish elapsed time, CPU time and asynchronous completion.
 - Keep unsupported or unavailable measurements explicit.
 - Check documentation links and rendered Markdown before publishing.
+- After a Valheim update, follow [docs/game-update-guide.md](docs/game-update-guide.md): run `scripts/check-game-update.ps1`, fix broken contracts before widening any check, validate on a disposable world, then deploy with backups.

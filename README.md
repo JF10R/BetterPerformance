@@ -4,6 +4,25 @@ Performance diagnostics and experimental, measurable optimizations for Valheim c
 
 **Status: experimental plugin, version 0.4.5. Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
 
+### TL;DR: what it improves and what to expect in play
+
+Diagnostics are always on; every optimization below is a separate switch, off by default, and reports its own status in the capture. "Measured" means an A/B on the disposable test world or a real session; "expected" means the mechanism is verified in the game code but the gain is not yet measured in play.
+
+| Improvement | Switch | Expected effect in play | Evidence |
+| --- | --- | --- | --- |
+| Steam Cloud write buffer sized to the payload | `CharacterSave.CloudWriteBufferSizedToPayload` | Character-save stall drops from 130 to 200 ms toward the map-serialization cost; three fewer 100 MiB allocations and 3 to 4 fewer GC collections per save | Expected ([research](docs/character-save-research-2026-09-15.md)) |
+| Exact map compression cache + bulk map serialization | `MapSaving.ExactCompressionCacheEnabled`, `MapSaving.Enabled` | Character saves about 45 to 55 % shorter when the map has not changed | Measured ([0.4.0 results](docs/frontier-runtime-0.4.0.md)) |
+| Minimap texture cache with shadow verification | `MinimapCache.Enabled`, `Mode=verified` | About 6 s less per join from the third join on, after two byte-identical verifications | Expected ([research](docs/join-cache-research-2026-09-15.md)) |
+| Initial loading acceleration | `InitialLoading.Enabled` | Join about 6 s / 18 % shorter in one isolated pair | Measured ([0.4.3 validation](docs/initial-loading-validation-0.4.3.md)) |
+| Replication cadence for fish and birds | `Replication.CosmeticResendIntervalEnabled` | About 15 to 20 % less replicated traffic; no change to fishing, ownership or saves | Measured deferral ratio, traffic not yet ([validation](docs/validation-0.4.5.md)) |
+| Bird velocity publication | `Replication.BirdVelocityEnabled` | Remote birds fly smoothly instead of lagging and jumping, also for a player without the plugin | Expected ([research](docs/replication-research-2026-09-15.md)) |
+| Server owner-grant expedite | `Ownership.ExpediteOwnerGrantsEnabled` (server) | Shorter pickup delay when the second player picks up host-owned items (the 530 ms tail) | Expected ([research](docs/ownership-latency-research-2026-09-15.md)) |
+| Terrain neighbour-save coalescing | `Terrain.CoalesceNeighbourSavesEnabled` | Fewer 50 to 100 ms frames while terraforming; saved terrain data identical | Expected ([research](docs/terrain-regeneration-research-2026-09-15.md)) |
+| Object creation budget and quota | `ObjectLoading.*` | Lower creation-batch peaks and, in one workload, loot available about 40 % sooner; mixed elsewhere | Measured, workload-dependent ([loot results](docs/loot-results-2026-09-14.md)) |
+| Local replication package copy removal | `NetworkMemory.LocalPackageCopyEnabled` | Fewer temporary allocations during replication; no wire change | Measured helper only ([0.4.0 results](docs/frontier-runtime-0.4.0.md)) |
+
+Not changed by any switch: world saves, ownership rules, item duplication guards, wire format, combat outcomes. The [roadmap](docs/improvement-roadmap-2026-09-15.md) lists what is next and what was rejected, and the [game update guide](docs/game-update-guide.md) explains how to re-verify the plugin after a Valheim update.
+
 The initial focus is measuring a client and dedicated server running on the same computer. The goal is to distinguish simulation stalls, object-loading delays, save pauses, and network backlogs before changing game behavior.
 
 ### Implemented diagnostics
@@ -81,6 +100,7 @@ The diagnostics phase is intended to coexist with BetterNetworking. Queue measur
 - [Logging cost reduction and offline measurements](docs/logging-overhead-2026-09-14.md)
 - [Measurement scope and interpretation](docs/measurements.md)
 - [Build, installation and capture guide](docs/capture-guide.md)
+- [Updating the plugin after a Valheim update](docs/game-update-guide.md)
 - [Validation results and remaining checks](docs/validation.md)
 - [Repeated-test protocol and uncertainty](docs/repeated-tests.md)
 - [Runtime results, including possible overhead](docs/runtime-results-2026-09-14.md)
