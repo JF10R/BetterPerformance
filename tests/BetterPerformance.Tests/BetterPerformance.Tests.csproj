@@ -5,5 +5,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/BetterPerformance.Core/BetterPerformance.Core.csproj" />
+    <Compile Include="../../src/BetterPerformance/CaptureSession.cs" Link="CaptureSession.cs" />
   </ItemGroup>
 </Project>

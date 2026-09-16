@@ -23,6 +23,7 @@ namespace BetterPerformance.Core
         private long dropped, rejected, written, accepted, bytes, lastWriteTicks;
         private volatile string? lastError;
         private volatile bool limitReached;
+        private volatile string priority = "pending";
 
         public long DroppedRecords => Interlocked.Read(ref dropped);
         public long WrittenRecords => Interlocked.Read(ref written);
@@ -31,6 +32,7 @@ namespace BetterPerformance.Core
         public double LastWriteMs => Interlocked.Read(ref lastWriteTicks) * 1000.0 / Stopwatch.Frequency;
         public string? LastError => lastError;
         public bool LimitReached => limitReached;
+        public string Priority => priority;
 
         public CaptureWriter(Func<Stream> openStream, int capacity, long maxBytes, bool leaveOpen = false)
         {
@@ -71,6 +73,9 @@ namespace BetterPerformance.Core
             string captureId = "";
             try
             {
+                // Best effort: file export should yield to normal-priority game work.
+                try { Thread.CurrentThread.Priority = ThreadPriority.BelowNormal; priority = "below_normal"; }
+                catch { priority = "unchanged"; }
                 stream = openStream();
                 var serializer = new DataContractJsonSerializer(typeof(CaptureRecord));
                 foreach (var record in queue.GetConsumingEnumerable())

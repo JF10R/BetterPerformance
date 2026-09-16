@@ -2,7 +2,7 @@
 
 Performance diagnostics and experimental, measurable optimizations for Valheim clients and dedicated servers.
 
-**Status: experimental plugin, version 0.3.0. Diagnostics are enabled by default; optimization options are disabled by default. The new quota and nearby-loot options have not been tested. The earlier 0.2.0 budget-only measurements do not validate these additions.**
+**Status: experimental plugin, version 0.4.5. Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
 
 The initial focus is measuring a client and dedicated server running on the same computer. The goal is to distinguish simulation stalls, object-loading delays, save pauses, and network backlogs before changing game behavior.
 
@@ -13,6 +13,17 @@ The initial focus is measuring a client and dedicated server running on the same
 - Separate timing of save preparation, the save call and the save worker.
 - Bounded aggregation and background JSONL export with dropped-record accounting and a per-capture file-size limit.
 - Native Steam transport counters, valid resident-memory readings, scenario markers and GC/boundary-crossing loop identification.
+- Optional continuous capture with linked segments and a directory allowance; no QA harness required.
+- Bounded passive loot-queue observations and structured slow-operation summaries with sampled context.
+- Reduced recorder self-measurement, smaller loot scans, collection backoff after costly polls and below-normal export priority.
+- Bounded local graphics configuration history, with distinct player preferences, active settings and synchronized simulation distances.
+- Object-budget tradeoffs, aggregate AI/pathfinding/spawn observations and Windows main-thread CPU accounting.
+- Private/Unity memory, optional sparse render timings, bounded local action outcomes and finer replication/character bottleneck stages.
+- Passive client loading timelines and inclusive world-generation/terrain stages; distinguish observed wall loading from native game-time spawn messages. See [loading telemetry](docs/loading-telemetry.md), [loading research](docs/loading-research-0.4.1.md) and the [data-safety audit](docs/data-safety-audit-0.4.1.md).
+- Base-simulation, terrain and generation timings (structural wear/support, heightmap rebuilds, terrain operations, crop/station ticks, location and dungeon spawns) with population counts; see [base simulation telemetry](docs/base-simulation-telemetry.md).
+- Per-name attribution of object creation cost, serialized replication bytes and routed RPC dispatch, bounded top-N per export; see [attribution telemetry](docs/attribution-telemetry.md).
+- Unity engine markers and counters through `ProfilerRecorder` (present/render-thread waits, GC pauses, frame times, draw calls), fixed-step accounting and GC mode; see [engine telemetry](docs/engine-telemetry.md).
+- Read-only host facts (priority, affinity, timer resolution, power scheme, shared performance counter), Steam transport path (direct or relayed), online backend, ownership and replication counters; see [host and network telemetry](docs/host-network-telemetry.md).
 - A Python report command for comparing captures without changing gameplay, persistence or networking settings.
 
 The first two-process capture cannot establish what a remote client is doing. Measurements from additional clients can be added when needed.
@@ -23,16 +34,51 @@ An optional soft time budget spreads scene object creation across updates. Separ
 
 Read the [object-budget guide and experiment](docs/object-budget.md) before enabling it. The module is separate from diagnostics and can be switched off locally during a session after installation at startup. No BetterNetworking implementation is duplicated.
 
-The [loot-scheduling guide](docs/loot-latency.md) describes the new independent options, limits and deferred validation. No tests were executed for these additions at the user's request.
+The [loot-scheduling guide](docs/loot-latency.md) describes the independent options and limits. The [0.3.0 measurements](docs/loot-results-2026-09-14.md) document the four-configuration comparison and uncertainty.
+
+The optional [preparation-clock adjustment](docs/budget-preparation.md) gives creation its allowance after the initial near scan/sort, while measuring that preparation separately. It can improve progress when preparation has exhausted the old whole-batch allowance; it can also increase an individual batch's elapsed time.
 
 ### Relationship to other mods
 
 BetterPerformance is an independent project. It is intended to work alongside ValheimPlus, without requiring it.
 
-The diagnostics phase is intended to coexist with BetterNetworking. Queue measurements explicitly retain its adjusted socket results. A possible later networking module may reuse and improve BetterNetworking's implementation; if that happens, overlapping networking patches must not run simultaneously. No BetterNetworking code is included. One headless run with BetterNetworking 2.3.3 and ValheimPlus 0.10.1.1 completed; broader compatibility remains unvalidated.
+The diagnostics phase is intended to coexist with BetterNetworking. Queue measurements explicitly retain its adjusted socket results. A possible later networking module may reuse and improve BetterNetworking's implementation; if that happens, overlapping networking patches must not run simultaneously. No BetterNetworking code is included. Isolated headless runs with BetterNetworking 2.3.3 and ValheimPlus 0.10.1.1/0.10.1.2 completed; broader compatibility remains unvalidated.
 
 ### Documentation
 
+- [Base simulation, terrain and generation telemetry](docs/base-simulation-telemetry.md)
+- [Attribution by prefab and RPC name](docs/attribution-telemetry.md)
+- [Engine markers and counters](docs/engine-telemetry.md)
+- [Host facts, Steam transport path and ownership counters](docs/host-network-telemetry.md)
+- [Report sections added in 0.4.4](docs/report-sections-0.4.4.md)
+- [Diagnostics validation 0.4.4: offline gates and isolated runtime session](docs/diagnostics-validation-0.4.4.md)
+- [Validation 0.4.5: gates, isolated session and what the next session must confirm](docs/validation-0.4.5.md)
+- [Play session 2026-09-15: executive report](docs/session-report-2026-09-15.md)
+- [Improvement roadmap after the 2026-09-15 session](docs/improvement-roadmap-2026-09-15.md)
+- [Research: character save and Steam Cloud](docs/character-save-research-2026-09-15.md), [join caches](docs/join-cache-research-2026-09-15.md), [replication of fish, birds and animals](docs/replication-research-2026-09-15.md), [ownership and second-player latency](docs/ownership-latency-research-2026-09-15.md), [terrain regeneration](docs/terrain-regeneration-research-2026-09-15.md), [server, ValheimPlus map sync and host freeze](docs/server-host-research-2026-09-15.md)
+- [Steam Cloud write buffer sizing](docs/cloud-write-optimization.md)
+- [Minimap texture cache with shadow verification](docs/minimap-cache.md)
+- [Replication cadence and bird velocity](docs/replication-cadence.md)
+- [Server owner-grant expedite](docs/ownership-expedite.md)
+- [Terrain neighbour-save coalescing](docs/terrain-save-coalescing.md)
+- [Initial loading acceleration: enable, disable and measure](docs/initial-loading.md)
+- [Why Valheim joining can take 30+ seconds: research reference](docs/valheim-loading-time-analysis.md)
+- [Fast-loading experiments and 0.4.2 diagnostics](docs/fast-join-results-0.4.2.md)
+- [Native biome cache findings and safe reuse constraints](docs/native-biome-cache-research.md)
+- [Frontier loading research](docs/fast-loading-frontier-2026-09-15.md)
+- [Real-session profile, slow operations and loot diagnostics](docs/play-session.md)
+- [Configuration history and diagnostic interpretation](docs/configuration-history.md)
+- [Frontier research and next experiments](docs/frontier-research-2026-09-15.md)
+- [0.4.0 feature disposition and implementation](docs/frontier-implementation-0.4.0.md)
+- [0.4.0 runtime results and installed profile](docs/frontier-runtime-0.4.0.md)
+- [CPU, RAM and bounded worker research](docs/cpu-memory-parallelism-2026-09-15.md)
+- [Local package-copy optimization](docs/local-package-copy.md)
+- [Local action outcome measurements](docs/action-telemetry.md)
+- [Map serialization and runtime validation](docs/frontier-runtime-2026-09-15.md)
+- [Object-budget tradeoff measurements](docs/budget-telemetry.md)
+- [AI and spawning telemetry](docs/ai-telemetry.md)
+- [Main-thread CPU accounting](docs/thread-cpu-telemetry.md)
+- [Logging cost reduction and offline measurements](docs/logging-overhead-2026-09-14.md)
 - [Measurement scope and interpretation](docs/measurements.md)
 - [Build, installation and capture guide](docs/capture-guide.md)
 - [Validation results and remaining checks](docs/validation.md)

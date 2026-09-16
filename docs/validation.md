@@ -1,11 +1,35 @@
 # Validation record
 
-### Version 0.3.0 — validation deferred
+### Version 0.4.0 — 2026-09-15 UTC
+
+The [0.4.0 runtime report](frontier-runtime-0.4.0.md) records the final installed DLL, configuration, paired-save measurements, package parity, preparation-clock behavior, resource/action observations and limitations. Core tests pass 37/37 and Python reports 33/33; actual client/server game-contract checks and two disposable Unity sessions completed. Both normal installations received the same verified DLL, with no active QA DLL. Wardogs ran concurrently; timing uncertainty and the invalid optional Mono allocation counter are explicitly documented. Worker architectures remain research prototypes, not shipped simulation changes.
+
+### Version 0.3.3 — 2026-09-15 UTC
+
+The [isolated runtime report](frontier-runtime-2026-09-15.md) supersedes earlier pending-validation notes for configuration history, budget observations, save/RPC and AI probes. It includes 34 core test groups, 22 Python tests, both reference builds, current game contract checks, actual Unity probe installation, map payload parity, temporary-character reload and paired local-save timings. The tested DLL was installed on both usual local installations; no QA DLL was deployed. This does not establish normal-session gains or every save/mod combination.
+
+### Version 0.3.2 — 2026-09-14 UTC
+
+- 27 C# test entries and 19 Python tests pass, including retained game timing/failure accounting, recorder sampling across drains, zero hot-path managed allocations after warmup, bounded poll backoff/recovery and metadata-aware coverage reports.
+- Client/server Release builds pass without warnings. The client-built DLL passes the existing 447 IL/state assertions against each local game assembly; no game process launched.
+- Seven paired offline x64 hot-path measurements per runtime show `MetricBook.Record` decreasing from 76.076 to 18.126 ns in .NET Framework and 64.047 to 14.393 ns in .NET 10. This isolates aggregation, not complete Harmony/Unity/logging cost. See [method and limits](logging-overhead-2026-09-14.md).
+- [Real-session safeguards](play-session.md) reduce optional collection frequency after overruns and label reduced coverage. No claim of negligible runtime overhead or measured gameplay gain.
+
+### Version 0.3.1 — 2026-09-14 UTC
+
+- 25 C# test entries pass, including five loot-tracker scenarios under one entry, storage allowance, linked segment export and five slow-summary checks. 17 Python tests pass, covering legacy captures, segmented reports, alert caps and loot coverage.
+- Release builds against current client and dedicated-server references pass without warnings. The client-built single DLL passes 447 IL/state assertions against each installed assembly, including passive observation both alone and following the budget transpiler, instruction/label/exception-block preservation and unsupported-layout rejection. These are not gameplay scenarios.
+- New continuous capture and telemetry are validated offline only. No client/server process launched for preparation; no fresh runtime overhead, achievement or long-session certification is claimed.
+- [Real-session configuration and limits](play-session.md) distinguish schema-based log-size projections from runtime measurements. The hard file cap may omit final interval counters; normal duration rollover preserves them.
+
+### Version 0.3.0 — 2026-09-14 UTC
 
 - Add separately disabled adaptive-quota and nearby-loot scheduling options, bounded classification caches, regular vanilla-order passes and diagnostics.
-- Regression fixtures are added/updated but **not executed**, at the user's request. No game/server sessions, benchmarks or automated test suites were launched for this version.
-- Source review and compilation are the only implementation checks; no new performance or runtime-compatibility claim. CI is intentionally skipped for the implementation commit.
-- See [behavior, constraints and deferred checks](loot-latency.md). The tested 0.2.0 package is not replaced.
+- Following renewed test authorization, 17 C# and 11 Python tests pass, including quota, tier-order, rollback and cadence fixtures. Export-to-report integration passes. Local Release builds against client/server references pass with zero warnings.
+- The game verifier passes 211 assertions per installed assembly, including original instruction/exception-block preservation, unsupported-layout rejection and active/disabled quota behavior. These are static/state checks, not 211 gameplay scenarios.
+- A continuous sixteen-window isolated headless comparison completed with four repetitions per configuration. All 1,024 tracked loot IDs appeared and were removed; both captures completed without dropped records or probe failures. Budget plus quota reduced mean observed loot availability from 268.57 to 158.73 ms. The incremental priority effect is mixed across blocks; no rendered-FPS or direct server gain is established.
+- A separate four-window functional check completed with 256 loot and 256 competing nonloot objects. It observed actual priority reordering, native ownership/gravity, 98 downward falls and no sampled deep penetration or native terrain correction during monitoring. Low-elevation windows did not demonstrate dry-ground falling. Both runtime pairs stopped; protected world hashes and count remained unchanged.
+- See [measurements and uncertainty](loot-results-2026-09-14.md) and [behavior and remaining limits](loot-latency.md). The original implementation commit intentionally skipped CI when testing was deferred. The tested 0.2.0 package is not replaced.
 
 ### Version 0.2.0 — 2026-09-14 UTC
 
@@ -13,7 +37,7 @@
 - The optional local game verifier passes 203 assertions per installed assembly, including default-off behavior, original IL/exception-block preservation, unsupported-layout rejection and nested state cleanup. These include per-instruction checks, not 203 independent scenarios.
 - One continuous eight-window headless comparison completed at Ultra with BetterNetworking 2.3.3 and ValheimPlus 0.10.1.1 present. All 512 tracked test items appeared and were removed; both captures completed without dropped records or probe failures.
 - Client creation-batch peaks decreased, while overall loop gains were modest and loot latency varied across pairs. The server did not exhaust its budget. The optimization remains disabled by default; see [results and uncertainty](object-budget.md).
-- Test processes stopped. The 26 protected `sept_2026` files retained their hashes and count. Existing installations and characters were not test targets.
+- Test processes stopped. The 26 protected real-world save files retained their hashes and count. Existing installations and characters were not test targets.
 
 ### Version 0.1.1 — 2026-09-14 UTC
 

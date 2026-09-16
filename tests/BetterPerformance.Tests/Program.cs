@@ -15,7 +15,18 @@ internal static class Program
         var tests = new Action[] { HistogramBounds, ConcurrentDrain, JsonRoundTrip,
             BoundedQueue, WriterFailure, BoundedFailureAccounting, FileLimit, UniqueFiles, CaptureClock,
             ResidentMemory, MarkerNames, CreationBudgetProgress, CreationBudgetBoundaries,
-            AdaptiveCreationQuota, LootPriorityTiers, LootPriorityFailure, LootPriorityFairness };
+            AdaptiveCreationQuota, LootPriorityTiers, LootPriorityFailure, LootPriorityFairness,
+            CaptureStorageLimit, LootTelemetryTests.Run, ContinuousSegmentExport,
+            SlowOperationTests.ThresholdBoundary, SlowOperationTests.FailureBelowThreshold,
+            SlowOperationTests.ExclusionsAndBounds, SlowOperationTests.WorkerAndLoopInterpretation,
+            SlowOperationTests.IndependentSnapshotsAndValidation, RecorderSampling, CollectorBackoff,
+            ConfigurationTests.Run, BudgetTelemetryTests.YieldWaitAndBounds,
+            BudgetTelemetryTests.CreationCostsAndBatches, BudgetTelemetryTests.CensoringAndReset,
+            AiCadenceTests.Run, MapBitWriterTests.Run, ThreadCpuWindowTests.Run, ExactByteCacheTests.Run,
+            MinimapCacheStoreTests.Run,
+            PackageCopyTests.Run, ActionTrackerTests.Run, LoadingTimelineTests.Run,
+            FrameStepWindowTests.Run, KeyedAggregatorTests.Run, AttributionTargetSplitTests.Run,
+            CloudWriteBufferTests.Run, ResendPolicyTests.Run };
         int failures = 0;
         foreach (var test in tests)
         {
@@ -30,6 +41,115 @@ internal static class Program
     private static void Check(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static void RecorderSampling()
+    {
+        var book = new MetricBook();
+        for (int i = 0; i < 65; i++) book.Record(Metric.ObjectCreate, i, i == 64);
+        var first = book.Drain();
+        var objects = first.Single(x => x.Name == "ObjectCreate");
+        Check(objects.Count == 65 && objects.SumMs == 2080 && objects.MaxMs == 64 && objects.FailedCalls == 1,
+            "Sampling self-overhead must not sample or lose actual game durations/failures.");
+        Check(first.Single(x => x.Name == "TimingRecorder").Count == 1, "Self-overhead uses one in 64 records.");
+        for (int i = 0; i < 63; i++) book.Record(Metric.ObjectCreate, 1);
+        Check(book.Drain().Single(x => x.Name == "TimingRecorder").Count == 1, "Recorder cadence must cross interval boundaries.");
+        for (int i = 0; i < 10000; i++) book.Record(Metric.ObjectCreate, 1);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 10000; i++) book.Record(Metric.ObjectCreate, 1);
+        Check(GC.GetAllocatedBytesForCurrentThread() == before, "Hot aggregation must allocate no managed bytes after warmup.");
+        book.CloseAndDrain();
+        book.Record(Metric.ObjectCreate, 100);
+        Check(book.Drain().All(x => x.Count == 0), "Closed collectors must reject both game and self samples.");
+    }
+
+    private static void CollectorBackoff()
+    {
+        var cadence = new CollectorCadence(2);
+        cadence.Observe(2);
+        Check(cadence.IntervalSeconds == 2 && cadence.Overruns == 0, "Exact soft budget does not trigger backoff.");
+        cadence.Observe(2.01);
+        Check(cadence.IntervalSeconds == 4 && cadence.Overruns == 1, "Costly polls must space subsequent snapshots.");
+        cadence.Observe(10); cadence.Observe(10); cadence.Observe(10);
+        Check(cadence.IntervalSeconds == 10, "Backoff remains bounded so whole-session collection continues.");
+        for (int i = 0; i < 29; i++) cadence.Observe(0.1);
+        Check(cadence.IntervalSeconds == 10, "A brief recovery must not immediately remove backoff.");
+        cadence.Observe(0.1);
+        Check(cadence.IntervalSeconds == 5, "Sustained cheap polling recovers gradually.");
+        for (int i = 0; i < 90; i++) cadence.Observe(0.1);
+        Check(cadence.IntervalSeconds == 2 && cadence.LastCostMs == 0.1 && cadence.Overruns == 4,
+            "Recovery respects configured minimum and preserves overrun evidence.");
+    }
+
+    private static void CaptureStorageLimit()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "BetterPerformance-storage-" + Guid.NewGuid().ToString("N"));
+        string capture = Path.Combine(directory, "previous.jsonl");
+        string unrelated = Path.Combine(directory, "notes.txt");
+        try
+        {
+            Check(CaptureStorage.HasCapacity(directory, 4096, 8192), "A new capture directory should have capacity.");
+            Directory.CreateDirectory(directory);
+            File.WriteAllBytes(capture, new byte[4096]);
+            File.WriteAllBytes(unrelated, new byte[16384]);
+            Check(CaptureStorage.HasCapacity(directory, 4096, 8192), "Exact remaining JSONL allowance should fit.");
+            Check(!CaptureStorage.HasCapacity(directory, 4097, 8192), "Do not start a file that could exceed the directory budget.");
+            Check(!CaptureStorage.HasCapacity(directory, 8193, 8192), "Oversized file allowance must be rejected.");
+            Check(new FileInfo(capture).Length == 4096 && new FileInfo(unrelated).Length == 16384,
+                "Storage checks must not alter or delete existing files.");
+        }
+        finally
+        {
+            if (File.Exists(capture)) File.Delete(capture);
+            if (File.Exists(unrelated)) File.Delete(unrelated);
+            if (Directory.Exists(directory)) Directory.Delete(directory);
+        }
+    }
+
+    private static void ContinuousSegmentExport()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "BetterPerformance-segments-" + Guid.NewGuid().ToString("N"));
+        string recording = Guid.NewGuid().ToString("N");
+        var paths = new List<string>();
+        try
+        {
+            for (int segment = 1; segment <= 2; segment++)
+            {
+                var session = new BetterPerformance.CaptureSession(directory, "client", 1800, 2, 16, 32768,
+                    new List<TextValue> { new TextValue("recording_session_id", recording),
+                        new TextValue("segment_index", segment.ToString(CultureInfo.InvariantCulture)) });
+                paths.Add(session.OutputPath);
+                session.Configurations.Observe("graphics.active.SimulationDistance", "3", 0, "initial");
+                session.Book.Record(Metric.RpcUpdate, 80);
+                session.Export(new List<NumberValue> { new NumberValue("peer_count", 1, "peers") }, new List<TextValue>());
+                session.Book.Record(Metric.SaveWorker, 300);
+                session.Configurations.Observe("graphics.active.SimulationDistance", "4", 0.1, "graphics_applied");
+                session.Export(new List<NumberValue>(), new List<TextValue> { new TextValue("reason", "duration_limit") }, final: true);
+                Check(session.Writer.Finish(5000), "Each segment must finish its bounded writer.");
+                Check(session.Writer.DroppedRecords == 0 && session.Writer.LastError == null, "Segment export must be complete.");
+                session.Writer.Dispose();
+                var records = File.ReadAllLines(session.OutputPath).Select(line => JsonDocument.Parse(line)).ToArray();
+                try
+                {
+                    Check(records.Length == 4 && records[3].RootElement.GetProperty("kind").GetString() == "writer_end", "Segment completion footer required.");
+                    Check(records[0].RootElement.GetProperty("labels")[0].GetProperty("value").GetString() == recording, "Segments retain recording identity.");
+                    Check(records[1].RootElement.GetProperty("slowOperations")[0].GetProperty("operation").GetString() == "RpcUpdate", "Slow alert remains beside interval context.");
+                    Check(records[2].RootElement.GetProperty("slowOperations")[0].GetProperty("operation").GetString() == "SaveWorker", "Final interval must preserve worker alert.");
+                    var changes = records[2].RootElement.GetProperty("configurationChanges");
+                    Check(changes.GetArrayLength() == 1 && changes[0].GetProperty("previous").GetString() == "3"
+                        && changes[0].GetProperty("current").GetString() == "4", "Final export preserves pending setting transitions.");
+                    Check(records[1].RootElement.GetProperty("configurationChanges").GetArrayLength() == 0,
+                        "Each segment starts with a baseline rather than a false setting change.");
+                }
+                finally { foreach (var record in records) record.Dispose(); }
+            }
+            Check(paths[0] != paths[1] && File.Exists(paths[0]), "Rolling segments preserve earlier files.");
+        }
+        finally
+        {
+            foreach (string path in paths) if (File.Exists(path)) File.Delete(path);
+            if (Directory.Exists(directory)) Directory.Delete(directory);
+        }
     }
 
     private static void CreationBudgetProgress()
@@ -214,12 +334,15 @@ internal static class Program
         using var writer = new CaptureWriter(() => new FileStream(path, FileMode.CreateNew, FileAccess.Write), 8, 1024 * 1024);
         var start = Sample();
         start.Kind = "start";
-        start.Labels = new[] { new TextValue("role", "synthetic_client"), new TextValue("synthetic", "true") };
+        start.Labels = new[] { new TextValue("role", "synthetic_client"), new TextValue("synthetic", "true"),
+            new TextValue("recording_session_id", "synthetic-session"), new TextValue("segment_index", "1") };
         writer.TryWrite(start);
         var book = new MetricBook();
         book.Record(Metric.LoopInterval, 80);
+        book.Record(Metric.RpcUpdate, 60);
         var interval = Sample();
         interval.Timings = book.Drain();
+        interval.SlowOperations = SlowOperationSummary.Create(interval.Timings);
         writer.TryWrite(interval);
         var end = Sample();
         end.Kind = "capture_end";

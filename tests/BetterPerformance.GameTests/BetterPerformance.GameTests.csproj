@@ -10,5 +10,8 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <Reference Include="0Harmony"><HintPath>$(ValheimDir)/BepInEx/core/0Harmony.dll</HintPath></Reference>
     <Reference Include="BepInEx"><HintPath>$(ValheimDir)/BepInEx/core/BepInEx.dll</HintPath></Reference>
+    <!-- Splatform.Steam.SteamCloud cannot be type-loaded on .NET Framework (default interface
+         methods), so its IL is read from metadata. Resolved from the local BepInEx install. -->
+    <Reference Include="Mono.Cecil"><HintPath>$(ValheimDir)/BepInEx/core/Mono.Cecil.dll</HintPath></Reference>
   </ItemGroup>
 </Project>

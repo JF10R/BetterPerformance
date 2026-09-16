@@ -2,7 +2,7 @@
   <Import Project="../../GamePaths.local.props" Condition="Exists('../../GamePaths.local.props')" />
   <PropertyGroup>
     <TargetFramework>net472</TargetFramework>
-    <Version>0.3.0</Version>
+    <Version>0.4.5</Version>
     <AssemblyName>BetterPerformance</AssemblyName>
     <ValheimDir Condition="'$(ValheimDir)' == ''">$(VALHEIM_DIR)</ValheimDir>
     <GameManagedDir Condition="'$(GameManagedDir)' == '' and Exists('$(ValheimDir)/valheim_Data/Managed')">$(ValheimDir)/valheim_Data/Managed</GameManagedDir>
@@ -16,9 +16,11 @@
     <Reference Include="BepInEx"><HintPath>$(BepInExCoreDir)/BepInEx.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="0Harmony"><HintPath>$(BepInExCoreDir)/0Harmony.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="assembly_valheim"><HintPath>$(GameManagedDir)/assembly_valheim.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_utils"><HintPath>$(GameManagedDir)/assembly_utils.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="com.rlabrecque.steamworks.net"><HintPath>$(GameManagedDir)/com.rlabrecque.steamworks.net.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine"><HintPath>$(GameManagedDir)/UnityEngine.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameManagedDir)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(GameManagedDir)/UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
   <Target Name="ValidateLocalGameReferences" BeforeTargets="ResolveReferences">
     <Error Condition="!Exists('$(GameManagedDir)/assembly_valheim.dll')" Text="Set ValheimDir (or VALHEIM_DIR) to a local Valheim client or dedicated server installation. Game assemblies are not distributed." />

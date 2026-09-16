@@ -15,6 +15,22 @@ namespace BetterPerformance.Core
         [DataMember(Name = "labels", Order = 6)] public TextValue[] Labels { get; set; } = Array.Empty<TextValue>();
         [DataMember(Name = "gauges", Order = 7)] public NumberValue[] Gauges { get; set; } = Array.Empty<NumberValue>();
         [DataMember(Name = "timings", Order = 8)] public TimingSummary[] Timings { get; set; } = Array.Empty<TimingSummary>();
+        [DataMember(Name = "slowOperations", Order = 9)] public SlowOperationSummary[] SlowOperations { get; set; } = Array.Empty<SlowOperationSummary>();
+        [DataMember(Name = "configurationChanges", Order = 10)] public ConfigurationChange[] ConfigurationChanges { get; set; } = Array.Empty<ConfigurationChange>();
+        [DataMember(Name = "attributions", Order = 11)] public AttributionSummary[] Attributions { get; set; } = Array.Empty<AttributionSummary>();
+    }
+
+    // One aggregated row of a named attribution group. Key is a prefab or RPC
+    // identifier, a "prefab:<hash>"/"hash:<int>" fallback, or the synthetic "other".
+    [DataContract]
+    public sealed class AttributionSummary
+    {
+        [DataMember(Name = "group", Order = 0)] public string Group { get; set; } = "";
+        [DataMember(Name = "key", Order = 1)] public string Key { get; set; } = "";
+        [DataMember(Name = "count", Order = 2)] public long Count { get; set; }
+        [DataMember(Name = "sumMs", Order = 3)] public double SumMs { get; set; }
+        [DataMember(Name = "maxMs", Order = 4)] public double MaxMs { get; set; }
+        [DataMember(Name = "bytes", Order = 5)] public long Bytes { get; set; }
     }
 
     [DataContract]

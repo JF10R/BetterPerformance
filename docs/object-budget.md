@@ -80,7 +80,7 @@ The server never exhausted this budget in the measured windows: **zero early exi
 
 **Decision:** retain the module as an opt-in experimental feature. It demonstrably spreads client creation work in this synthetic session, but a large general improvement in multiplayer smoothness, lower CPU use, unchanged action latency and behavior in a developed world are not established. Keep diagnostics and BetterNetworking separate; this change does not tune networking or saves.
 
-Accepted local run: `20260914T022236Z-0d0c69`. Tested DLL SHA256: `D661B8BE76C9C0F01D4550AB3A816A9A3C5EE281CF10801BF9849E2EAE3789EF`. Captures completed with 409 client and 441 server written records, zero dropped records and zero probe failures. Both test processes stopped. The 26 protected `sept_2026` files retained their original hashes and file count; the existing game installations and characters were not used as test targets.
+Accepted local run: `20260914T022236Z-0d0c69`. Tested DLL SHA256: `D661B8BE76C9C0F01D4550AB3A816A9A3C5EE281CF10801BF9849E2EAE3789EF`. Captures completed with 409 client and 441 server written records, zero dropped records and zero probe failures. Both test processes stopped. The 26 protected real-world save files retained their original hashes and file count; the existing game installations and characters were not used as test targets.
 
 Three incomplete pilots are excluded: `20260914T021143Z-834810` and `20260914T021511Z-45ec6b` exposed incomplete QA cleanup through unloaded/unowned GameObjects; `20260914T021846Z-8a6551` exposed the cross-process Mono clock offset. Only the isolated harness changed between these pilots and the accepted run; the tested plugin binary stayed the same. No raw saves, identities or captures are published.
 

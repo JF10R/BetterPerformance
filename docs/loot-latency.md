@@ -2,7 +2,7 @@
 
 ### Validation status
 
-Implemented with **no tests or game/server sessions executed**, as requested. Compilation and source review are not runtime validation. Regression fixtures were added/updated but remain unexecuted. No latency, CPU or smoothness improvement is claimed for these additions. The [0.2.0 measurements](object-budget.md) apply to the earlier budget-only implementation.
+Initially implemented with validation deferred, then tested after renewed user authorization. Offline regression checks and a sixteen-window isolated runtime comparison now pass. Budget plus quota reduced mean observed loot availability from 268.57 to 158.73 ms in that headless workload; the incremental priority effect was mixed across blocks. See [0.3.0 results, safety scope and uncertainty](loot-results-2026-09-14.md). The [0.2.0 measurements](object-budget.md) remain historical budget-only results.
 
 ### Configuration
 
@@ -40,10 +40,12 @@ Prefab component inspection happens before partitioning, outside the sort compar
 
 If classification fails, the candidate list retains its original order and the priority option disables itself for the current process, with a warning and diagnostic status. The existing time budget and quota option remain independent of that failure. Priority preparation counts against the same elapsed-time budget, so its own overhead can delay creation.
 
-### Diagnostics and deferred checks
+### Diagnostics and remaining checks
+
+Passive `loot_queue_*` observations measure sampled network-object wait before local scene creation, not pickup latency or chest/inventory activity. See [diagnostic scope and configuration history](configuration-history.md) before interpreting small sample counts.
 
 Captures expose configured quota/radius, actual option enablement under the parent switch, quota-expansion call counts, priority/vanilla-order pass counts, selected-candidate counts and bounded-fallback counts. A selected candidate can still fail readiness or remain pending; these counters are **not** successful loot spawns or latency measurements.
 
-Unexecuted regression coverage includes disabled/active quota behavior, larger vanilla allowances, exhausted time budgets, tier boundaries, stable partitioning, failure rollback, scratch cleanup, the three-to-one ordering cadence, and the new Harmony hook's placement after vanilla sorting.
+Executed regression coverage includes disabled/active quota behavior, larger vanilla allowances, exhausted time budgets, tier boundaries, stable partitioning, failure rollback, scratch cleanup, the three-to-one ordering cadence, and the new Harmony hook's placement after vanilla sorting.
 
-Runtime compatibility, total overhead, time-to-item availability, delayed-tail behavior, and effects on non-loot loading remain unmeasured for 0.3.0. No distributable package replaces the previously tested 0.2.0 package as part of this change.
+Validation covers only the installed mod combination and documented workloads. Broader runtime compatibility, total overhead, terrain-streaming collision races, rendered gameplay and remote-client behavior remain unvalidated. No distributable package replaces the previously tested 0.2.0 package as part of this change.

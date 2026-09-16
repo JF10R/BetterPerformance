@@ -10,7 +10,21 @@ namespace BetterPerformance.Core
         ObjectCreate, ObjectRemove, SaveWorldCall, SaveWorker, SavePrepare,
         CollectorPoll, CollectorSnapshot, TimingRecorder,
         NetworkPeers, SaveUpdate, RpcUpdate, ObjectCreateSorted, DistantObjectCreate,
-        LoopWithGcCollection, LoopAcrossPhaseBoundary
+        LoopWithGcCollection, LoopAcrossPhaseBoundary,
+        CharacterSave, MapSerialization, CharacterSaveToDisk, SaveClone,
+        RpcDispatch, IncomingZdoData, SyncListBuild, SendZdos, GraphicsObservation,
+        AiBatch, PathQuery, PathfindingUpdate, SpawnListUpdate, SpawnAttempt,
+        SectorDiscovery, ClientReplicationSort, ServerReplicationSort, CharacterFixedBatch,
+        JoinPeerInfo, WorldInitialize, WorldPregenerate, WorldFindLakes, WorldPlaceRivers,
+        WorldPlaceStreams, LocalZoneDemand, TerrainSyncWait, TerrainBuildWorker,
+        MapTextureCacheLoad, WorldMapGenerate, PlayerMapLoad, SpawnResourceCheck,
+        // Base-simulation probes. Appended at the end: histogram order is positional.
+        WearBatch, WearSupportUpdate, HeightmapLateBatch, HeightmapRegenerate,
+        HeightmapApplyModifiers, HeightmapCollisionRebuild, HeightmapRenderRebuild,
+        TerrainCompApply, PlantUpdate, SmelterUpdate, FireplaceUpdate, CookingStationUpdate,
+        BeehiveUpdate, SapCollectorUpdate, FermenterUpdate, WindmillUpdate,
+        LocationSpawn, VegetationPlace, ZoneSpawn, ZonePlaceLocations,
+        DungeonGenerate, DungeonSpawn
     }
 
     [DataContract]
@@ -34,6 +48,8 @@ namespace BetterPerformance.Core
         private readonly Histogram[] histograms;
         private bool closed;
         private long invalidSamples;
+        private int recorderCountdown = RecorderSampleEvery;
+        public const int RecorderSampleEvery = 64;
         public long InvalidSamples { get { lock (gate) return invalidSamples; } }
 
         public MetricBook()
@@ -44,18 +60,23 @@ namespace BetterPerformance.Core
 
         public void Record(Metric metric, double milliseconds, bool failed = false)
         {
-            long started = Stopwatch.GetTimestamp();
             lock (gate)
             {
                 if (closed) return;
                 if ((int)metric < 0 || (int)metric >= histograms.Length ||
                     double.IsNaN(milliseconds) || double.IsInfinity(milliseconds) || milliseconds < 0)
                 { invalidSamples++; return; }
+                bool sampleRecorder = metric != Metric.TimingRecorder && --recorderCountdown == 0;
+                long started = sampleRecorder ? Stopwatch.GetTimestamp() : 0;
                 histograms[(int)metric].Add(milliseconds, failed);
-                // This measures lock acquisition and aggregation, not all Harmony dispatch overhead.
-                if (metric != Metric.TimingRecorder)
+                // Sample only aggregation inside the lock. This is NOT total recorder
+                // cost, lock acquisition, or Harmony dispatch overhead; all game samples remain.
+                if (sampleRecorder)
+                {
+                    recorderCountdown = RecorderSampleEvery;
                     histograms[(int)Metric.TimingRecorder].Add(
                         (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency, false);
+                }
             }
         }
 

@@ -16,7 +16,10 @@ Capture each process separately. A dedicated server running on the same computer
 | Networking | Peer count; adjusted socket queue API results; native Steam pending reliable/unreliable and unacknowledged bytes, estimated rates, ping and queue time; network-peer and RPC update timings | Native counters exclude game/mod managed queues. Steam rates are estimates, not packet capture. No compression time/ratio or action latency. BetterNetworking can adjust socket results, including negative values; the collector preserves them separately. No resetting of game network counters. |
 | Zones and objects | Zone/scene update timings; CreateObjects/RemoveObjects batch timings; sorted and distant creation timings; scene instance occupancy; false readiness results; effective simulation radius | Readiness counts observe existing calls, not unique failed object spawns. Batch call counts are not object counts. Sampled occupancy is not creation/removal throughput. |
 | Saves | ZDOMan.PrepareSave, ZNet.SaveWorld, and ZNet.SaveWorldThread elapsed timings | Timings overlap and must not be summed. SaveWorld can include waiting; SaveWorldThread is not pure disk time. No claim of full end-to-end save duration. |
-| Capture quality | Poll/snapshot/aggregation timings, invalid samples, probe failures, dropped export records, writer time and bytes | Self-measurement excludes some Harmony/callback costs. An external baseline comparison is still required. |
+| Base simulation and generation | Wear/support, heightmap, terrain operation, station tick, location/dungeon timings; live population counts | Inclusive elapsed per call or batch; counts are list sizes, not per-frame work. Other mods can disable wear, so zero cost is a finding, not a probe failure. See [base simulation telemetry](base-simulation-telemetry.md). |
+| Attribution | Top-N creation cost, serialized bytes and routed RPC dispatch by prefab/handler name | Bytes precede compression; names are prefab/handler identifiers; "other" conserves totals. See [attribution telemetry](attribution-telemetry.md). |
+| Engine and host | Unity marker/counter samples, fixed steps per frame, GC mode; process priority/affinity, timer resolution, power scheme, Steam transport path, ownership counters | Availability is decided at runtime per metric; headless captures lack render markers; marker overhead is unmeasured. See [engine](engine-telemetry.md) and [host/network](host-network-telemetry.md) telemetry. |
+| Capture quality | Poll/snapshot/aggregation timings, invalid samples, probe failures, dropped export records, writer time and bytes; collection backoff and loot cooldown | Self-measurement excludes some Harmony/callback costs. Since 0.3.2, recorder self-timing samples 1/64 valid records inside the lock only. A single instrumented gameplay session cannot isolate total overhead. |
 
 Every instrumented method and counter needs validation against the target game build. A timer surrounding a method reports elapsed time, not necessarily exclusive CPU time or the total duration of asynchronous work.
 
@@ -28,7 +31,7 @@ Every instrumented method and counter needs validation against the target game b
 - Keep export work outside hot update paths and expose dropped samples.
 - Keep data local by default. Do not collect player names, Steam IDs, IP addresses, world names, save contents, or RPC payloads for routine timing diagnostics.
 - Provide a diagnostics-only mode with no networking or gameplay tuning.
-- Validate overhead with instrumentation disabled and enabled under comparable conditions.
+- Use comparable enabled/disabled conditions when quantifying complete overhead. When normal gameplay cannot be repeated, reduce collection work directly, expose soft overruns and retain uncertainty; do not require a second gameplay pass just to collect useful data.
 
 Probe availability and mod versions are recorded at capture start. Unsupported method signatures are skipped. Fixed histograms retain counts, sums, maxima and approximate percentile upper bounds using powers-of-two buckets starting at 0.125 ms. Zero-count timing summaries indicate no completed observed calls in that window, not proven zero cost.
 
@@ -61,6 +64,6 @@ With only the local client and server instrumented, conclusions about a remote p
 - Produces separate, bounded local captures for the client and dedicated server.
 - Labels supported signals, unavailable signals, units and sampling intervals accurately.
 - Can correlate a local stall with observed save, loading, object or network activity without claiming causality from correlation alone.
-- Reports its own overhead and dropped samples.
+- Reports measured portions of its own cost, collection backoff and dropped samples without implying complete overhead coverage.
 - Leaves gameplay, networking settings and save behavior unchanged.
 - Complements the existing offline aggregation/export/report checks with runtime verification.

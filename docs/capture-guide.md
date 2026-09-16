@@ -1,6 +1,6 @@
 # Capture guide
 
-BetterPerformance 0.3.0 provides diagnostics and a separate, opt-in [object-creation budget](object-budget.md), with new, untested [quota and loot-priority options](loot-latency.md). Compilation does not establish runtime compatibility or low overhead. It changes no networking settings and contains no BetterNetworking implementation.
+BetterPerformance 0.3.2 provides diagnostics and a separate, opt-in [object-creation budget](object-budget.md), with [quota and loot-priority options](loot-latency.md). The [real-session guide](play-session.md) covers continuous capture, passive loot observations, slow-operation alerts and collection-cost safeguards. Compilation does not establish runtime compatibility or low overhead. It changes no networking settings and contains no BetterNetworking implementation.
 
 ### Build and package
 
@@ -30,10 +30,11 @@ With the game and server stopped, copy `BetterPerformance.dll` into each install
 
 The first launch generates `BepInEx/config/jf10r.BetterPerformance.cfg`. Default behavior:
 
-- Start one capture when the first world session begins in that process.
+- Start one capture when each world session begins in that process.
 - Capture for up to 300 seconds, aggregating once per second.
 - Queue up to 16 records for the background writer; discard excess records and count them.
 - Limit each capture to 64 MiB, including its writer completion record.
+- Reserve each next file's allowance within a 512 MiB JSONL directory limit; preserve old captures.
 - Stop on world-session exit, the duration limit, a writer failure, or the file-size limit.
 - Leave the experimental object-creation budget disabled.
 
@@ -45,6 +46,7 @@ In the game's local console, if available, use:
 bp_capture start
 bp_capture status
 bp_capture stop
+bp_mark lag_loot
 ```
 
 Commands affect only that process. They are not remote server commands. The dedicated server can use automatic capture without an interactive console. Restart to apply configuration changes; `Capture.MethodTimings=false` omits method probes for an overhead comparison. `Capture.Enabled=false` installs no diagnostic probes and starts no captures; `ObjectLoading.Enabled` controls the optimization independently.
@@ -65,7 +67,7 @@ The Markdown report provides timing summaries and the largest observed loop gaps
 
 For overhead checks, compare a repeatable baseline without the plugin, a capture with method timings disabled, and a capture with timings enabled. The self-measured counters are useful but do not include all Harmony dispatch, callback or scheduling costs.
 
-The optional `BetterPerformance.Plugin.Mark("loot_spawn")` API records bounded scenario markers from the Unity main thread. It returns false when unavailable, called from another thread, given an invalid identifier or after 256 markers. It does not send network messages. Use a test harness or another local mod; there is no automatic scenario detection.
+The optional `BetterPerformance.Plugin.Mark("loot_spawn")` API and local `bp_mark loot_spawn` command record bounded scenario markers from the Unity main thread. The API returns false when unavailable, called from another thread, given an invalid identifier or after 256 markers per segment. It does not send network messages. Normal diagnostics require no harness or manual markers.
 
 `scripts/compare_runs.py` supports the two- or three-block comparison described in [the repeated-test protocol](repeated-tests.md). It consumes independent observer JSON, not ordinary capture JSONL. Its run-level uncertainty estimates must not be interpreted as thousands of independent frame-level experiments.
 
