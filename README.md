@@ -4,24 +4,24 @@ Performance diagnostics and experimental, measurable optimizations for Valheim c
 
 **Status: experimental plugin, version 0.4.5. Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
 
-### TL;DR: what it improves and what to expect in play
+### TL;DR: what it improves and who benefits
 
-Diagnostics are always on; every optimization below is a separate switch, off by default, and reports its own status in the capture. "Measured" means an A/B on the disposable test world or a real session; "expected" means the mechanism is verified in the game code but the gain is not yet measured in play.
+Diagnostics are always on. Each optimization is one switch, off by default, and reports its own status in the capture. "Measured" means an A/B on the test world or a real session; "expected" means the mechanism is verified in the game code and the gain is not yet measured in play.
 
-| Improvement | Switch | Expected effect in play | Evidence |
-| --- | --- | --- | --- |
-| Steam Cloud write buffer sized to the payload | `CharacterSave.CloudWriteBufferSizedToPayload` | Character-save stall drops from 130 to 200 ms toward the map-serialization cost; three fewer 100 MiB allocations and 3 to 4 fewer GC collections per save | Expected ([research](docs/character-save-research-2026-09-15.md)) |
-| Exact map compression cache + bulk map serialization | `MapSaving.ExactCompressionCacheEnabled`, `MapSaving.Enabled` | Character saves about 45 to 55 % shorter when the map has not changed | Measured ([0.4.0 results](docs/frontier-runtime-0.4.0.md)) |
-| Minimap texture cache with shadow verification | `MinimapCache.Enabled`, `Mode=verified` | About 6 s less per join from the third join on, after two byte-identical verifications | Expected ([research](docs/join-cache-research-2026-09-15.md)) |
-| Initial loading acceleration | `InitialLoading.Enabled` | Join about 6 s / 18 % shorter in one isolated pair | Measured ([0.4.3 validation](docs/initial-loading-validation-0.4.3.md)) |
-| Replication cadence for fish and birds | `Replication.CosmeticResendIntervalEnabled` | About 15 to 20 % less replicated traffic; no change to fishing, ownership or saves | Measured deferral ratio, traffic not yet ([validation](docs/validation-0.4.5.md)) |
-| Bird velocity publication | `Replication.BirdVelocityEnabled` | Remote birds fly smoothly instead of lagging and jumping, also for a player without the plugin | Expected ([research](docs/replication-research-2026-09-15.md)) |
-| Server owner-grant expedite | `Ownership.ExpediteOwnerGrantsEnabled` (server) | Shorter pickup delay when the second player picks up host-owned items (the 530 ms tail) | Expected ([research](docs/ownership-latency-research-2026-09-15.md)) |
-| Terrain neighbour-save coalescing | `Terrain.CoalesceNeighbourSavesEnabled` | Fewer 50 to 100 ms frames while terraforming; saved terrain data identical | Expected ([research](docs/terrain-regeneration-research-2026-09-15.md)) |
-| Object creation budget and quota | `ObjectLoading.*` | Lower creation-batch peaks and, in one workload, loot available about 40 % sooner; mixed elsewhere | Measured, workload-dependent ([loot results](docs/loot-results-2026-09-14.md)) |
-| Local replication package copy removal | `NetworkMemory.LocalPackageCopyEnabled` | Fewer temporary allocations during replication; no wire change | Measured helper only ([0.4.0 results](docs/frontier-runtime-0.4.0.md)) |
+| Improvement | Switch | Impact in play | Mod installed on | Helps players without the mod? | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| Character save: Steam Cloud buffer sized to the payload | `CharacterSave.CloudWriteBufferSizedToPayload` | Save hitch about 2× shorter: the three 100 MiB scratch buffers per save disappear | Your client | No, your own saves only | Expected |
+| Character save: map compression cache + bulk map writes | `MapSaving.ExactCompressionCacheEnabled`, `MapSaving.Enabled` | Save hitch about 50 % shorter when your map has not changed | Your client | No, your own saves only | Measured |
+| Join: minimap texture cache | `MinimapCache.Enabled`, `Mode=verified` | Joining about 6 s faster, from your third join on | Your client | No | Expected |
+| Join: initial loading acceleration | `InitialLoading.Enabled` | Joining about 18 % faster (6 s in one test) | Your client | No | Measured |
+| Network: fish and bird update throttling | `Replication.CosmeticResendIntervalEnabled` | About 15 to 20 % less traffic sent by the machine that owns them; everyone receives fewer updates | Client and server | Yes, they receive less traffic | Deferral measured, traffic not yet |
+| Network: bird velocity | `Replication.BirdVelocityEnabled` | Birds fly smoothly on other players' screens instead of lagging and jumping | The bird owner's client (usually the host) | Yes, the fix is in the data they receive | Expected |
+| Pickup: owner-grant expedite | `Ownership.ExpediteOwnerGrantsEnabled` | Picking up an item another player owns responds sooner (targets the 0.5 s waits) | Server | Yes, no client mod needed | Expected |
+| Terraforming: neighbour-save coalescing | `Terrain.CoalesceNeighbourSavesEnabled` | Less lag when terraforming near zone borders: one save per neighbour instead of one per pixel | The machine that owns the terrain (the terraformer's client, or the server) | Yes, for everyone waiting on that frame | Expected |
+| Loading: object creation budget and quota | `ObjectLoading.*` | Objects appear more evenly while loading; loot up to 40 % sooner in one test, mixed elsewhere | Your client | No | Measured, workload-dependent |
+| Network: local package copy removal | `NetworkMemory.LocalPackageCopyEnabled` | Fewer memory allocations while replicating; no visible change | Client and server | Indirectly | Measured helper only |
 
-Not changed by any switch: world saves, ownership rules, item duplication guards, wire format, combat outcomes. The [roadmap](docs/improvement-roadmap-2026-09-15.md) lists what is next and what was rejected, and the [game update guide](docs/game-update-guide.md) explains how to re-verify the plugin after a Valheim update.
+Nothing here changes world saves, ownership rules, item duplication guards, the wire format or combat outcomes. Details and sources: the [roadmap](docs/improvement-roadmap-2026-09-15.md), the [0.4.5 validation](docs/validation-0.4.5.md) and the [game update guide](docs/game-update-guide.md).
 
 The initial focus is measuring a client and dedicated server running on the same computer. The goal is to distinguish simulation stalls, object-loading delays, save pauses, and network backlogs before changing game behavior.
 
