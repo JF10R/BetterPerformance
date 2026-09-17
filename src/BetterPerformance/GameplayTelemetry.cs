@@ -32,6 +32,7 @@ namespace BetterPerformance
         private static Func<object, int>? placementGhost;
         private static Func<object, bool>? attachedToShip;
         private static Func<Smelter, int>? queueSize, processedQueueSize;
+        private static Func<object, int>? patchObjectCount, timedOutPatchCount;
         private static MemberCount shipInstances, vagonInstances, sfxInstances;
 
         // Container and inventory.
@@ -43,6 +44,10 @@ namespace BetterPerformance
         private static int smelterCatchupMax;
         // Building.
         private static long placementGhostCalls, placementGhostFrames, piecesPlaced, piecesRemoved;
+        private static long snapPiecesScanned, snapPointsEnumerated, ghostClippingTests;
+        // Clutter.
+        private static long clutterPatchesGenerated, clutterRebuildAllFrames, clutterGroundQueries;
+        private static long clutterObjectsInstantiated, clutterHeightmapNotReadyFrames, clutterPatchesTimedOut;
         // Gathering and combat.
         private static long treeDamageRpcs, treeLogsSpawned, rockDamageRpcs, rockAreaDestroys;
         private static long destructibleDestroys, attacksStarted, hitsDealt, dropEvents, dropsSpawned;
@@ -128,6 +133,39 @@ namespace BetterPerformance
                     typeof(void), nameof(OnPiecePlaced), null));
             Probe("piece_remove", () =>
                 Patch("Player", "RemovePiece", Type.EmptyTypes, typeof(bool), null, nameof(AfterPieceRemoved)));
+            // Snap work per ghost refresh. The lists are the caller's reused buffers, so the
+            // counters take their growth across the call, never their absolute length.
+            Probe("snap_points", () =>
+                PatchStatic("Piece", "GetSnapPoints",
+                    new[] { typeof(Vector3), typeof(float), typeof(List<Transform>), GameList("Piece") },
+                    typeof(void), nameof(BeforeSnapPoints), nameof(AfterSnapPoints)));
+            Probe("ghost_clipping", () =>
+                Patch("Player", "TestGhostClipping", new[] { typeof(GameObject), typeof(float) },
+                    typeof(bool), null, nameof(AfterGhostClipping)));
+
+            // Clutter. Attribution for a heavy ClutterLateUpdate frame: whether it generated
+            // one patch or many, how many ground raycasts that patch drew, and how many
+            // prefabs it instantiated.
+            Probe("clutter_patch", () =>
+            {
+                patchObjectCount = CountReader(Inner("ClutterSystem", "PatchData"), "m_objects");
+                Patch("ClutterSystem", "GenerateVegPatch", new[] { typeof(Vector2Int), typeof(float) },
+                    Inner("ClutterSystem", "PatchData"), null, nameof(AfterGenerateVegPatch));
+            });
+            Probe("clutter_rebuild_all", () =>
+                Patch("ClutterSystem", "UpdateGrass", new[] { typeof(float), typeof(bool), typeof(Vector3) },
+                    typeof(void), nameof(BeforeUpdateGrass), null));
+            // GetGroundInfo returns four values through out parameters whose types a
+            // standalone CLR cannot load, so the overload is matched on shape instead.
+            Probe("clutter_ground_query", () =>
+                PatchByShape("ClutterSystem", "GetGroundInfo", 5, typeof(bool), null, nameof(AfterGroundInfo)));
+            Probe("clutter_heightmap_ready", () =>
+                Patch("ClutterSystem", "IsHeightmapReady", Type.EmptyTypes, typeof(bool), null, nameof(AfterHeightmapReady)));
+            Probe("clutter_timeout", () =>
+            {
+                timedOutPatchCount = CountReader(Game("ClutterSystem"), "m_tempToRemovePair");
+                Patch("ClutterSystem", "TimeoutPatches", new[] { typeof(float) }, typeof(void), null, nameof(AfterTimeoutPatches));
+            });
 
             Probe("tree_damage", () =>
                 Patch("TreeBase", "RPC_Damage", new[] { typeof(long), Game("HitData") }, typeof(void), nameof(OnTreeDamage), null));
@@ -194,10 +232,48 @@ namespace BetterPerformance
         private static Type Game(string name) => typeof(ZNet).Assembly.GetType(name, false)
             ?? throw new InvalidOperationException("Game type is unavailable: " + name);
 
+        private static Type GameList(string element) => typeof(List<>).MakeGenericType(Game(element));
+
+        // A private nested game type; do not depend on publicized DLLs.
+        private static Type Inner(string owner, string nested) => AccessTools.Inner(Game(owner), nested)
+            ?? throw new InvalidOperationException("Nested game type is unavailable: " + owner + "+" + nested);
+
+        // Reads the Count of a collection held in a game field. The collection is never
+        // enumerated, indexed or retained, and its element type is never resolved.
+        private static Func<object, int> CountReader(Type owner, string fieldName)
+        {
+            FieldInfo field = AccessTools.Field(owner, fieldName)
+                ?? throw new InvalidOperationException("Missing field: " + owner.Name + "." + fieldName);
+            PropertyInfo? count = field.FieldType.GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
+            if (count == null || count.PropertyType != typeof(int))
+                throw new InvalidOperationException("Field has no int Count: " + owner.Name + "." + fieldName);
+            return instance =>
+            {
+                object? collection = field.GetValue(instance);
+                return collection == null ? 0 : (int)count.GetValue(collection, null)!;
+            };
+        }
+
+        // List<T> implements the non-generic ICollection, so a buffer passed as object is
+        // measured without reflection and without naming its element type.
+        private static int Size(object? collection) =>
+            collection is System.Collections.ICollection list ? list.Count : -1;
+
         private static void Patch(string typeName, string name, Type[] arguments, Type result, string? prefix, string? postfix)
         {
             MethodInfo? method = AccessTools.DeclaredMethod(Game(typeName), name, arguments);
             if (method == null || method.IsStatic || method.ReturnType != result)
+                throw new InvalidOperationException("Unsupported gameplay signature: " + typeName + "." + name);
+            Patches.Patch(method, prefix: prefix == null ? null : new HarmonyMethod(typeof(GameplayTelemetry), prefix),
+                postfix: postfix == null ? null : new HarmonyMethod(typeof(GameplayTelemetry), postfix));
+        }
+
+        // Same contract as Patch, for a static game method. Kept separate so the instance
+        // check on every other hook stays exact.
+        private static void PatchStatic(string typeName, string name, Type[] arguments, Type result, string? prefix, string? postfix)
+        {
+            MethodInfo? method = AccessTools.DeclaredMethod(Game(typeName), name, arguments);
+            if (method == null || !method.IsStatic || method.ReturnType != result)
                 throw new InvalidOperationException("Unsupported gameplay signature: " + typeName + "." + name);
             Patches.Patch(method, prefix: prefix == null ? null : new HarmonyMethod(typeof(GameplayTelemetry), prefix),
                 postfix: postfix == null ? null : new HarmonyMethod(typeof(GameplayTelemetry), postfix));
@@ -327,6 +403,46 @@ namespace BetterPerformance
         private static void OnPiecePlaced() { if (Observe()) piecesPlaced++; }
         private static void AfterPieceRemoved(bool __result) { if (__result && Observe()) piecesRemoved++; }
 
+        // Growth of the caller's two reused buffers across one snap-point scan.
+        private struct SnapState { internal int Points, Pieces; }
+
+        private static void BeforeSnapPoints(object __2, object __3, out SnapState __state)
+        {
+            __state = new SnapState { Points = -1, Pieces = -1 };
+            if (!Observe()) return;
+            __state = new SnapState { Points = Size(__2), Pieces = Size(__3) };
+        }
+        private static void AfterSnapPoints(object __2, object __3, SnapState __state)
+        {
+            if (__state.Points < 0 || __state.Pieces < 0 || !Observe()) return;
+            int points = Size(__2) - __state.Points, pieces = Size(__3) - __state.Pieces;
+            if (points > 0) snapPointsEnumerated += points;
+            if (pieces > 0) snapPiecesScanned += pieces;
+        }
+        private static void AfterGhostClipping() { if (Observe()) ghostClippingTests++; }
+
+        // --- clutter -----------------------------------------------------------------
+
+        private static void AfterGenerateVegPatch(object __result)
+        {
+            if (!Observe() || __result == null) return;
+            try
+            {
+                clutterPatchesGenerated++;
+                clutterObjectsInstantiated += patchObjectCount!(__result);
+            }
+            catch { probeFailures++; }
+        }
+        private static void BeforeUpdateGrass(bool __1) { if (__1 && Observe()) clutterRebuildAllFrames++; }
+        private static void AfterGroundInfo() { if (Observe()) clutterGroundQueries++; }
+        private static void AfterHeightmapReady(bool __result) { if (!__result && Observe()) clutterHeightmapNotReadyFrames++; }
+        private static void AfterTimeoutPatches(object __instance)
+        {
+            if (!Observe()) return;
+            try { clutterPatchesTimedOut += timedOutPatchCount!(__instance); }
+            catch { probeFailures++; }
+        }
+
         // --- gathering and combat ---------------------------------------------------
 
         private static void OnTreeDamage() { if (Observe()) treeDamageRpcs++; }
@@ -423,6 +539,18 @@ namespace BetterPerformance
             Count("placement_ghost_frames", ref placementGhostFrames, "frames");
             Count("pieces_placed", ref piecesPlaced, "pieces");
             Count("pieces_removed", ref piecesRemoved, "pieces");
+            Count("snap_pieces_scanned", ref snapPiecesScanned, "pieces");
+            Count("snap_points_enumerated", ref snapPointsEnumerated, "points");
+            Count("ghost_clipping_tests", ref ghostClippingTests);
+            gauges.Add(new NumberValue("placement_update_over_10ms",
+                TimingHooks.DrainPlacementUpdateOver10Ms(), "calls"));
+
+            Count("clutter_patches_generated", ref clutterPatchesGenerated, "patches");
+            Count("clutter_rebuild_all_frames", ref clutterRebuildAllFrames, "frames");
+            Count("clutter_ground_queries", ref clutterGroundQueries);
+            Count("clutter_objects_instantiated", ref clutterObjectsInstantiated, "objects");
+            Count("clutter_heightmap_not_ready_frames", ref clutterHeightmapNotReadyFrames, "frames");
+            Count("clutter_patches_timed_out", ref clutterPatchesTimedOut, "patches");
 
             Count("tree_damage_rpcs", ref treeDamageRpcs);
             Count("tree_logs_spawned", ref treeLogsSpawned, "objects");
@@ -461,7 +589,9 @@ namespace BetterPerformance
                 Missing.Count == 0 ? "none" : string.Join(",", Missing.ToArray())));
             labels.Add(new TextValue("gameplay_skipped_counters",
                 "container_in_use_max:no_container_instance_list; smelter_instances_max:no_smelter_instance_list; " +
-                "audio_sources_playing:no_cheap_bounded_read"));
+                "audio_sources_playing:no_cheap_bounded_read; " +
+                "ghost_physics_queries:no_single_game_side_wrapper_for_the_ghost_overlap_and_raycast_calls; " +
+                "ghost_clipping_pairs:pair_loop_is_inline_and_exits_early_so_only_the_call_count_is_observable"));
         }
 
         private static void PollSizes()
@@ -495,6 +625,11 @@ namespace BetterPerformance
             containerChanges = containerGuiFrames = inventoryGuiFrames = inventoryMoves = inventoryStacks = 0;
             smelterUpdates = smelterCatchupSum = smelterSpawns = fireplaceFuelAdds = cookingSpawns = beehiveExtracts = 0;
             placementGhostCalls = placementGhostFrames = piecesPlaced = piecesRemoved = 0;
+            snapPiecesScanned = snapPointsEnumerated = ghostClippingTests = 0;
+            clutterPatchesGenerated = clutterRebuildAllFrames = clutterGroundQueries = 0;
+            clutterObjectsInstantiated = clutterHeightmapNotReadyFrames = clutterPatchesTimedOut = 0;
+            // The build-mode stall bucket lives in the timing finalizer; drain it with the rest.
+            TimingHooks.DrainPlacementUpdateOver10Ms();
             treeDamageRpcs = treeLogsSpawned = rockDamageRpcs = rockAreaDestroys = 0;
             destructibleDestroys = attacksStarted = hitsDealt = dropEvents = dropsSpawned = 0;
             exploreUpdates = exploreScans = fogApplies = fogPixels = largeMapFrames = 0;
@@ -514,6 +649,7 @@ namespace BetterPerformance
             Status = "disabled";
             placementGhost = null;
             attachedToShip = null;
+            patchObjectCount = timedOutPatchCount = null;
             shipInstances = vagonInstances = sfxInstances = default;
             // Clearing the typed readers touches the same unloadable game types.
             try { ClearReaders(); }

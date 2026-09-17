@@ -38,7 +38,9 @@ namespace BetterPerformance.Core
         CraftingStationBatch, SfxBatch, InstanceRendererBatch, SmokeBatch,
         FloatingBatch, ShipBatch, ZSyncTransformBatch, ZSyncAnimationBatch,
         ItemDropSlowUpdate, ItemAutoStack, PickableInteract,
-        PlayerUpdate, PlayerFixedUpdate, HudUpdate, ClutterLateUpdate, WaterStaticUpdate
+        PlayerUpdate, PlayerFixedUpdate, HudUpdate, ClutterLateUpdate, WaterStaticUpdate,
+        // Clutter and build-mode attribution probes. Appended at the end: histogram order is positional.
+        ClutterGeneratePatches, ClutterGenerateVegPatch, BuildMenuOpen, PieceRemove, PieceCopy
     }
 
     [DataContract]

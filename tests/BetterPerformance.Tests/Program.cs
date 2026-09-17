@@ -23,6 +23,7 @@ internal static class Program
             ConfigurationTests.Run, BudgetTelemetryTests.YieldWaitAndBounds,
             BudgetTelemetryTests.CreationCostsAndBatches, BudgetTelemetryTests.CensoringAndReset,
             AiCadenceTests.Run, MapBitWriterTests.Run, ThreadCpuWindowTests.Run, ExactByteCacheTests.Run,
+            PrecompressionPolicyTests.Run,
             MinimapCacheStoreTests.Run,
             PackageCopyTests.Run, ActionTrackerTests.Run, LoadingTimelineTests.Run,
             FrameStepWindowTests.Run, KeyedAggregatorTests.Run, AttributionTargetSplitTests.Run,

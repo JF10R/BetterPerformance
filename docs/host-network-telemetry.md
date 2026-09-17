@@ -62,6 +62,52 @@ zero after a counter reset), `zdoman_zdos_sent_last_sec`, `zdoman_zdos_recv_last
 A rising `zdo_request_rpcs` with a growing `zdoman_client_change_queue` points at replication
 pressure rather than local CPU. The item and container gauges count outgoing requests only.
 
+### Which caller set the owner
+
+`zdo_set_owner_calls` counts every `ZDO.SetOwner` and keeps that meaning. Seven counters split
+it by the native method that was running at the time, set by a prefix/finalizer pair on each
+caller and read by the `SetOwner` prefix. A finalizer, not a postfix, so a throwing native call
+cannot leave a marker set.
+
+| Counter | Caller |
+| --- | --- |
+| `zdo_set_owner_calls_release_to_zero` | a `ZDOMan.ReleaseNearbyZDOS` pass releasing to owner 0 |
+| `zdo_set_owner_calls_release_claim_peer` | a peer pass claiming for that peer |
+| `zdo_set_owner_calls_release_server_pass` | the server's own reference pass claiming for the session |
+| `zdo_set_owner_calls_zdo_data_reapply` | `ZDOMan.RPC_ZDOData` |
+| `zdo_set_owner_calls_disconnect_sweep` | `ZDOMan.RemovePeer` and the orphan sweep it runs |
+| `zdo_set_owner_calls_invalid_prefab_destroy` | `ZNetScene.CreateObjectsSorted` and `CreateDistantObjects` |
+| `zdo_set_owner_calls_other` | every other caller, including client gameplay code |
+
+The three release counters are zero on a client: the release loop runs only on a server. A
+marker whose game signature changed is named in `ownership_markers_unavailable`, its own split
+counter then reads zero, and `ownership_caller_split_status` becomes `partial`. Counters that
+lost their marker land in `zdo_set_owner_calls_other`, so the seven still sum to the parent.
+
+### Release cycles
+
+One cycle is one `ZDOMan.ReleaseZDOS` call that did work: the server pass followed by one pass
+per peer, all inside a single `Update`. `release_cycles` counts them.
+
+| Counter | Meaning |
+| --- | --- |
+| `release_cycle_released` | owner writes to 0 inside a cycle |
+| `release_cycle_reclaimed` | ZDOs released by one pass and claimed again by a later pass of the same cycle |
+| `release_cycle_net_changes` | ZDOs whose owner at cycle end differs from the owner at cycle start |
+| `release_cycle_capacity_skips` | ZDOs a cycle touched beyond the 65536-entry tracking cap |
+
+The decision these exist to settle: a net-change design that stages the cycle and applies only
+final transitions is worth building only if `release_cycle_reclaimed` is a material fraction of
+`release_cycle_released`. If `release_cycle_released` plus the two claim counters is already
+close to `release_cycle_net_changes`, there is no churn to remove and
+`zdo_set_owner_calls_other` names where the calls actually come from.
+
+Limits: the cycle map holds the first owner seen and the last owner written per ZDO, both
+maintained as the cycle runs, so closing a cycle reads nothing back from the game and a ZDO
+destroyed mid-cycle is not re-resolved. A capacity skip is an untracked ZDO, not a ZDO that did
+not change; when `release_cycle_capacity_skips` is above zero the other three cycle counters are
+lower bounds.
+
 Limits: counts of native calls, not latency; request completion latency is in the action
 telemetry. Hooks count only on the installing thread, anything else lands in
 `ownership_other_thread_skips`.

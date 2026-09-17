@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.7";
+        public const string PluginVersion = "0.4.8";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -93,6 +93,11 @@ namespace BetterPerformance
             // GUI group-sound deduplication and mined-drop placement stay behind their own keys.
             GuiSoundDeduplication.Install(Config, Logger);
             MiningDropPlacement.Install(Config, Logger);
+            // 0.4.8 opt-in modules: smelter catch-up budget, dungeon spawn slicing and, after the
+            // exact map cache it requires, speculative map pre-compression.
+            SmelterCatchupBudget.Install(Config, Logger);
+            DungeonSpawnSlicing.Install(Config, Logger);
+            MapPrecompression.Install(Config, Logger);
             new Terminal.ConsoleCommand("bp_budget", "Experimental object budget: on | off | status (installed at startup; local process only)",
                 (Terminal.ConsoleEvent)(args =>
                 {
@@ -107,6 +112,14 @@ namespace BetterPerformance
                         SetMiningDropPlacementEnabled(args.Args[1] == "on");
                     args.Context.AddString("Mined-drop placement: " + MiningDropPlacement.Status + "; active=" + MiningDropPlacement.Enabled
                         + "; overridden=" + MiningDropPlacement.OverriddenCount() + "/" + MiningDropPlacement.TrackedCount);
+                }));
+            new Terminal.ConsoleCommand("bp_dungeon", "Experimental dungeon spawn slicing: on | off | status (installed at startup; local process only)",
+                (Terminal.ConsoleEvent)(args =>
+                {
+                    if (args.Args.Length == 2 && (args.Args[1] == "on" || args.Args[1] == "off"))
+                        SetDungeonSpawnSlicingEnabled(args.Args[1] == "on");
+                    args.Context.AddString("Dungeon spawn slicing: " + DungeonSpawnSlicing.Status + "; active=" + DungeonSpawnSlicing.Enabled
+                        + "; pending=" + DungeonSpawnSlicing.PendingCount);
                 }));
             if (!captureEnabled.Value) { Logger.LogInfo("Diagnostics disabled. No probes installed."); return; }
             instances = AccessTools.Field(typeof(ZNetScene), "m_instances");
@@ -179,6 +192,16 @@ namespace BetterPerformance
             return true;
         }
 
+        // Main-thread-only, like the other runtime toggles. In-flight slices always finish;
+        // only new dungeons return to the native single-frame spawn.
+        public static bool SetDungeonSpawnSlicingEnabled(bool enabled)
+        {
+            if (instance == null || !DungeonSpawnSlicing.Installed ||
+                System.Threading.Thread.CurrentThread.ManagedThreadId != instance.mainThreadId) return false;
+            DungeonSpawnSlicing.SetEnabled(enabled);
+            return true;
+        }
+
         // Main-thread-only scenario API; bounded labels/records, no file access or RPC.
         public static bool Mark(string name)
         {
@@ -245,6 +268,7 @@ namespace BetterPerformance
                     recordingId = Guid.NewGuid().ToString("N");
                     segment = 0;
                 }
+                MapPrecompression.Pump();
                 LoadingTelemetry.Enabled = captureEnabled.Value && !loadingPaused && LoadingTelemetry.Installed;
                 LoadingDetailsTelemetry.Enabled = captureEnabled.Value && !loadingPaused && LoadingDetailsTelemetry.Installed;
                 if (!captureEnabled.Value) { continuePending = false; if (current != null) StopCapture("disabled"); return; }
@@ -309,7 +333,8 @@ namespace BetterPerformance
                 new TextValue("game_version", global::Version.GetVersionString(false)),
                 new TextValue("mode", ObjectCreationBudget.Installed || InitialLoadingOptimization.Installed || FastMapSerialization.Installed || MapCompressionCache.Installed || PackageCopyOptimization.Installed
                     || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || TerrainSaveCoalescing.Enabled
-                    || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
+                    || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled || SmelterCatchupBudget.Enabled || DungeonSpawnSlicing.Enabled || MapPrecompression.Installed
+                    ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
                 new TextValue("map_serialization_status", FastMapSerialization.Status),
                 new TextValue("queue_semantics", "socket API result; active mods may adjust it or make it negative"),
                 new TextValue("percentiles", "approximate upper bounds from fixed logarithmic buckets"),
@@ -345,6 +370,9 @@ namespace BetterPerformance
             TerrainSaveCoalescing.Reset();
             GuiSoundDeduplication.Reset();
             MiningDropPlacement.Reset();
+            SmelterCatchupBudget.Reset();
+            DungeonSpawnSlicing.Reset();
+            MapPrecompression.Reset();
             TerrainTelemetry.Reset();
             GameplayTelemetry.Reset();
             RenderTelemetry.Reset();
@@ -376,6 +404,7 @@ namespace BetterPerformance
             RenderTelemetry.Sample(gauges, labels);
             EngineTelemetry.Sample(gauges, labels);
             MapCompressionCache.Sample(gauges, labels);
+            MapPrecompression.Sample(gauges, labels);
             PackageCopyOptimization.Sample(gauges, labels);
             CloudWriteOptimization.Sample(gauges, labels);
             MinimapTextureCache.Sample(gauges, labels);
@@ -387,6 +416,8 @@ namespace BetterPerformance
             TerrainSaveCoalescing.Sample(gauges, labels);
             GuiSoundDeduplication.Sample(gauges, labels);
             MiningDropPlacement.Sample(gauges, labels);
+            SmelterCatchupBudget.Sample(gauges, labels);
+            DungeonSpawnSlicing.Sample(gauges, labels);
             TerrainTelemetry.Sample(gauges, labels);
             GameplayTelemetry.Sample(gauges, labels);
             AttributionTelemetry.Sample(gauges, labels);
@@ -494,7 +525,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { TerrainSaveCoalescing.Sample(gauges, labels); TerrainTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { GuiSoundDeduplication.Sample(gauges, labels); MiningDropPlacement.Sample(gauges, labels); }
+            try { GuiSoundDeduplication.Sample(gauges, labels); MiningDropPlacement.Sample(gauges, labels); SmelterCatchupBudget.Sample(gauges, labels); DungeonSpawnSlicing.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { GameplayTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -507,7 +538,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { InitialLoadingOptimization.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { MapCompressionCache.Sample(gauges, labels); PackageCopyOptimization.Sample(gauges, labels); CloudWriteOptimization.Sample(gauges, labels); MinimapTextureCache.Sample(gauges, labels); }
+            try { MapCompressionCache.Sample(gauges, labels); MapPrecompression.Sample(gauges, labels); PackageCopyOptimization.Sample(gauges, labels); CloudWriteOptimization.Sample(gauges, labels); MinimapTextureCache.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { EngineTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -529,6 +560,7 @@ namespace BetterPerformance
             LootQueueTelemetry.Uninstall();
             ObjectCreationBudget.Uninstall();
             FastMapSerialization.Uninstall();
+            MapPrecompression.Uninstall();
             MapCompressionCache.Uninstall();
             PackageCopyOptimization.Uninstall();
             CloudWriteOptimization.Uninstall();
@@ -541,6 +573,8 @@ namespace BetterPerformance
             TerrainSaveCoalescing.Uninstall();
             GuiSoundDeduplication.Uninstall();
             MiningDropPlacement.Uninstall();
+            SmelterCatchupBudget.Uninstall();
+            DungeonSpawnSlicing.Uninstall();
             TerrainTelemetry.Uninstall();
             GameplayTelemetry.Uninstall();
             AttributionTelemetry.Uninstall();

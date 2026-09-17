@@ -1,5 +1,13 @@
 # Changelog
 
+### 0.4.8
+
+- Add opt-in smelter catch-up budget: a transpiler bounds the per-call `Smelter.UpdateSmelter` catch-up loop (default 8 simulated seconds per call); the native accumulator already carries the remainder, so totals, fuel use and timestamps are identical while a 20 to 34 ms return-to-base spike spreads over frames. Only the smelter family iterates; the other stations are O(1) and untouched.
+- Add opt-in dungeon spawn slicing on the client: `DungeonGenerator.Spawn` places every room in one frame (24 ms mean, 45 ms max in forest crypts); the module replays the same per-room placement under a per-frame budget, holds the prefab release until the last slice, falls back to the native loop when the player is inside the dungeon bounds, and drops its queue entry on destroy. `bp_dungeon on | off | status`.
+- Add opt-in speculative map pre-compression: a worker thread re-encodes and gzips a main-thread snapshot of the explored bit arrays through the game's own writer and primes the exact compression cache, so the synchronous character save hits it instead of paying 60 to 87 ms of native gzip. Byte identity is enforced end to end; a stale snapshot is an ordinary miss.
+- Add count-only diagnostics ahead of three further optimizations: clutter patch generation (two timings, six counters), build-mode events (`BuildMenuOpen`, `PieceRemove`, `PieceCopy` timings, snap and clipping counters, a 10 ms placement bucket) and a seven-way `ZDO.SetOwner` caller split with per-cycle release/reclaim counters on the server. Log the unresolved cosmetic prefab names.
+- Add six research documents (2026-09-17) with the verified game mechanisms behind each item.
+
 ### 0.4.7
 
 - Add opt-in GUI group-sound deduplication: `InventoryGui.SetActiveGroup` creates the group effect even when the requested group is already active, stacking a second sound on the button click for the Craft/Upgrade tabs and recipe clicks; a prefix clears `playSound` in exactly that case and leaves the cycling path and every real group change alone.

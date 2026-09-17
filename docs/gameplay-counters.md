@@ -14,6 +14,25 @@ A counter is observed native calls, not coverage of the activity it names. A zer
 - `drops_spawned` sums the length of each `DropTable.GetDropList()` result: objects the table selected, not objects confirmed instantiated. `drop_on_destroyed_events` counts the destruction events that asked for a list.
 - `pieces_removed` and `rock_area_destroys` count only calls that returned true.
 
+## Build-mode placement
+
+`snap_points_enumerated` and `snap_pieces_scanned` are the growth of the caller's two reused buffers across one `Piece.GetSnapPoints(Vector3,float,List<Transform>,List<Piece>)`, which is the only base-size-dependent step of the ghost refresh. Growth, not length: the buffers belong to the caller and are cleared by it.
+
+`ghost_clipping_tests` counts `Player.TestGhostClipping` calls, which run only for pieces with `m_noClipping`.
+
+`placement_update_over_10ms` counts `PlacementUpdate` calls above 10 ms. The timing histogram already counts stalls over 50 ms; the build-mode spike observed so far sits in the 12–42 ms band, below that bound, so its own bucket is what turns "a slow frame appeared in this window" into a count.
+
+## Clutter
+
+These six answer one question: whether a heavy `ClutterLateUpdate` frame is one expensive patch or a forced rebuild of many.
+
+- `clutter_patches_generated` counts `GenerateVegPatch` calls that returned a patch. Against the frame count, more than one per frame means a forced rebuild bypassed the one-patch throttle.
+- `clutter_rebuild_all_frames` counts entries into `UpdateGrass` with `rebuildAll` set, which is that forced rebuild directly.
+- `clutter_ground_queries` counts `GetGroundInfo` calls, one `Physics.Raycast` each. Divided by `clutter_patches_generated` this gives the per-patch raycast count the cost model assumes.
+- `clutter_objects_instantiated` is the number of prefabs a generated patch created, read as the `Count` of the patch's own object list after the call. For instanced clutter that is one host object per clutter entry, not one per accepted candidate, so it separates `Instantiate` cost from raycast cost and is not a blade-of-grass count.
+- `clutter_heightmap_not_ready_frames` counts `IsHeightmapReady` returning false, which is the whole pass being skipped for that frame.
+- `clutter_patches_timed_out` is the number of patches destroyed per `TimeoutPatches` call, read as the `Count` of the reused removal list.
+
 ## Frame gauges
 
 One per-frame observation runs, as a postfix on `Hud.Update`, and reads a handful of statics with no allocation: GUI visibility, the shown container, the map mode and whether the local player is attached to a ship. `gameplay_observed_frames` is the denominator for `container_gui_open_frames`, `inventory_gui_open_frames`, `minimap_large_map_frames` and `player_on_ship_frames`. It counts frames in which that native method ran, so it is not a frame-rate measurement and is not comparable to a render frame count.
@@ -28,6 +47,8 @@ One per-frame observation runs, as a postfix on `Hud.Update`, and reads a handfu
 
 - `container_in_use_max` and `smelter_instances_max`: the game keeps no static instance list for `Container` or `Smelter`, and enumerating the scene to build one is not a bounded read.
 - `audio_sources_playing`: no cheap bounded read exists for it.
+- `ghost_physics_queries`: the ghost refresh calls `Physics.OverlapSphere` and `Physics.Raycast` inline from several places. There is no single game-side wrapper to count, and patching the engine methods would hook every caller in the game. `snap_pieces_scanned` and `ghost_clipping_tests` cover the two parts that scale with base size.
+- `ghost_clipping_pairs`: the collider-pair loop is inline inside `TestGhostClipping` and returns on the first penetration, so a prefix or postfix cannot see how many pairs ran. Counting the bound instead would mean an extra `GetComponentsInChildren` per call, which is added work in the very path being measured. Only `ghost_clipping_tests` is exported.
 
 These are listed in the `gameplay_skipped_counters` label so a capture states its own gaps.
 

@@ -23,6 +23,16 @@ namespace BetterPerformance.Core
             writer.Write(output, 0, output.Length);
             return true;
         }
+        // Publication without a copy. The caller transfers ownership of both arrays and must
+        // never mutate them again; equality and the size bound are unchanged from Store.
+        public bool Adopt(byte[] source, byte[] encoded)
+        {
+            if (source == null || encoded == null || (long)source.Length + encoded.Length > maximumBytes)
+            { Clear(); return false; }
+            Clear();
+            input = source; output = encoded;
+            return true;
+        }
         public bool Store(ArraySegment<byte> source, ArraySegment<byte> encoded)
         {
             if (source.Array == null || encoded.Array == null || (long)source.Count + encoded.Count > maximumBytes)

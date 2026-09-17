@@ -897,7 +897,13 @@ def host_network_report(records):
     return output
 
 
-OWNERSHIP_TOTALS = ('zdo_set_owner_calls', 'zdo_request_rpcs', 'item_request_own_rpcs', 'container_open_requests')
+OWNERSHIP_TOTALS = ('zdo_set_owner_calls', 'zdo_set_owner_calls_release_to_zero',
+                    'zdo_set_owner_calls_release_claim_peer', 'zdo_set_owner_calls_release_server_pass',
+                    'zdo_set_owner_calls_zdo_data_reapply', 'zdo_set_owner_calls_disconnect_sweep',
+                    'zdo_set_owner_calls_invalid_prefab_destroy', 'zdo_set_owner_calls_other',
+                    'release_cycles', 'release_cycle_released', 'release_cycle_reclaimed',
+                    'release_cycle_net_changes', 'release_cycle_capacity_skips',
+                    'zdo_request_rpcs', 'item_request_own_rpcs', 'container_open_requests')
 
 OWNERSHIP_PEAKS = ('zdoman_client_change_queue', 'zdoman_dead_zdos', 'zdoman_zdos_sent_total',
                    'zdoman_zdos_recv_total', 'zdoman_zdos_sent_last_sec', 'zdoman_zdos_recv_last_sec')
@@ -943,7 +949,12 @@ GAMEPLAY_GROUPS = (
                               'inventory_moves', 'inventory_item_stacks')),
     ('Stations', ('smelter_updates', 'smelter_catchup_items_sum', 'smelter_spawns', 'fireplace_fuel_adds',
                   'cooking_spawns', 'beehive_extracts')),
-    ('Building', ('placement_ghost_updates', 'placement_ghost_frames', 'pieces_placed', 'pieces_removed')),
+    ('Building', ('placement_ghost_updates', 'placement_ghost_frames', 'pieces_placed', 'pieces_removed',
+                  'snap_pieces_scanned', 'snap_points_enumerated', 'ghost_clipping_tests',
+                  'placement_update_over_10ms')),
+    ('Clutter', ('clutter_patches_generated', 'clutter_rebuild_all_frames', 'clutter_ground_queries',
+                 'clutter_objects_instantiated', 'clutter_heightmap_not_ready_frames',
+                 'clutter_patches_timed_out')),
     ('Gathering and combat', ('tree_damage_rpcs', 'tree_logs_spawned', 'rock_damage_rpcs', 'rock_area_destroys',
                               'destructible_destroys', 'attacks_started', 'hits_dealt',
                               'drop_on_destroyed_events', 'drops_spawned')),
@@ -959,14 +970,15 @@ GAMEPLAY_PEAKS = ('inventory_items_max', 'smelter_catchup_items_max', 'ship_inst
 GAMEPLAY_TIMINGS = ('InventoryGuiUpdate', 'InventoryGridUpdate', 'ContainerGridUpdate', 'InventoryGuiShow',
                     'ContainerInteract', 'ContainerChanged', 'ContainerCheckForChanges', 'InventoryAddItem',
                     'InventoryMoveItem', 'PlacementGhostUpdate', 'PlacementUpdate', 'PiecePlace',
-                    'BuildGuiUpdate', 'MinimapUpdate', 'MinimapExploreUpdate', 'MinimapLargeMapUpdate',
+                    'PieceRemove', 'PieceCopy', 'BuildMenuOpen', 'BuildGuiUpdate', 'MinimapUpdate', 'MinimapExploreUpdate', 'MinimapLargeMapUpdate',
                     'MinimapSetMapMode', 'ShipFixedUpdate', 'VagonFixedUpdate', 'TreeDamage', 'TreeLogDamage',
                     'TreeDestroy', 'MineRockDamage', 'MineRockDamageArea', 'DestructibleDamage',
                     'DestructibleDestroy', 'WearDamage', 'CharacterDamage', 'CharacterApplyDamage',
                     'AttackStart', 'PieceDropResources', 'DropTableDrop', 'SmelterSpawn', 'CraftingStationBatch',
                     'SfxBatch', 'InstanceRendererBatch', 'SmokeBatch', 'FloatingBatch', 'ShipBatch',
                     'ZSyncTransformBatch', 'ZSyncAnimationBatch', 'ItemDropSlowUpdate', 'ItemAutoStack',
-                    'PickableInteract', 'PlayerUpdate', 'HudUpdate', 'ClutterLateUpdate', 'WaterStaticUpdate')
+                    'PickableInteract', 'PlayerUpdate', 'HudUpdate', 'ClutterLateUpdate',
+                    'ClutterGeneratePatches', 'ClutterGenerateVegPatch', 'WaterStaticUpdate')
 
 
 def gameplay_timings(records):

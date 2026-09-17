@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using BetterPerformance.Core;
 
 internal static class ExactByteCacheTests
@@ -29,6 +30,21 @@ internal static class ExactByteCacheTests
         cache.Store(new ArraySegment<byte>(Array.Empty<byte>()), new ArraySegment<byte>(new byte[] { 4 }));
         Check(cache.TryWrite(new ArraySegment<byte>(Array.Empty<byte>()), writer), "empty input is valid");
         cache.Clear(); Check(cache.RetainedBytes == 0, "world/end clear releases references");
+
+        // Adoption publishes without a copy; equality and the size bound are unchanged.
+        byte[] adoptedInput = { 1, 2, 3 }, adoptedOutput = { 4, 5 };
+        using var adoptStream = new MemoryStream(); using var adoptWriter = new BinaryWriter(adoptStream);
+        Check(cache.Adopt(adoptedInput, adoptedOutput), "adoption within the bound succeeds");
+        Check(cache.RetainedBytes == 5, "adopted arrays are the retained storage");
+        Check(cache.TryWrite(new ArraySegment<byte>(new byte[] { 1, 2, 3 }), adoptWriter), "adopted entry serves an equal input");
+        Check(adoptStream.ToArray().SequenceEqual(adoptedOutput), "adopted output is emitted verbatim");
+        Check(!cache.TryWrite(new ArraySegment<byte>(new byte[] { 1, 2, 4 }), adoptWriter), "adopted entry still compares every byte");
+        Check(!cache.Adopt(new byte[100], new byte[1]) && cache.RetainedBytes == 0, "oversize adoption clears rather than retains");
+        Check(!cache.Adopt(null!, new byte[1]) && !cache.Adopt(new byte[1], null!), "adoption refuses missing arrays");
+        cache.Adopt(adoptedInput, adoptedOutput);
+        cache.Store(new ArraySegment<byte>(new byte[] { 7 }), new ArraySegment<byte>(new byte[] { 8 }));
+        Check(!cache.TryWrite(new ArraySegment<byte>(adoptedInput), adoptWriter), "a real store replaces the adopted entry");
+        cache.Clear();
     }
     private static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
     private sealed class BrokenStream : MemoryStream

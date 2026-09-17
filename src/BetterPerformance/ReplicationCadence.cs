@@ -285,16 +285,19 @@ namespace BetterPerformance
             scene = new WeakReference<ZNetScene>(current);
             CosmeticPrefabs.Clear();
             configuredNames = knownPrefabs = unknownPrefabs = 0;
+            var unresolved = new List<string>();
             foreach (string entry in (cosmeticNames.Value ?? "").Split(','))
             {
                 string name = entry.Trim();
                 if (name.Length == 0) continue;
                 configuredNames++;
                 int hash = name.GetStableHashCode();
-                if (current.GetPrefab(hash) == null) { unknownPrefabs++; continue; }
+                if (current.GetPrefab(hash) == null) { unknownPrefabs++; unresolved.Add(name); continue; }
                 if (CosmeticPrefabs.Add(hash)) knownPrefabs++;
             }
-            logger.LogInfo("Cosmetic resend interval resolved " + knownPrefabs + " of " + configuredNames + " configured prefabs.");
+            // Configured names only, never scene or player data; an unknown name is a config typo or a game rename.
+            logger.LogInfo("Cosmetic resend interval resolved " + knownPrefabs + " of " + configuredNames + " configured prefabs"
+                + (unresolved.Count == 0 ? "." : "; unresolved: " + string.Join(",", unresolved.ToArray()) + "."));
         }
 
         // Part B. Runs after vanilla has written position, rotation and its own zero

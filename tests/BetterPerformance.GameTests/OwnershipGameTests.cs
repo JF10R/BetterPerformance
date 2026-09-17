@@ -57,13 +57,68 @@ internal static class OwnershipGameTests
         var instance = zdoMan.GetProperty("instance", BindingFlags.Public | BindingFlags.Static);
         Check(instance != null && instance.PropertyType == zdoMan, "ZDOMan.instance is a public static accessor");
 
+        // 2b. Caller-marker targets. Each one is the native method whose SetOwner writes the
+        // split counters attribute; a changed signature must break here, not silently rebin.
+        var zNetScene = TypeOf("ZNetScene");
+        Type[] create = { typeof(List<>).MakeGenericType(zdo), typeof(int), typeof(int).MakeByRefType() };
+        var scopes = new (Type Owner, string Name, Type[] Parameters)[] {
+            (zdoMan, "ReleaseZDOS", new[] { typeof(float) }),
+            (zdoMan, "RPC_ZDOData", new[] { TypeOf("ZRpc"), TypeOf("ZPackage") }),
+            (zdoMan, "RemovePeer", new[] { TypeOf("ZNetPeer") }),
+            (zNetScene, "CreateObjectsSorted", create),
+            (zNetScene, "CreateDistantObjects", create)
+        };
+        foreach (var (owner, name, parameters) in scopes)
+        {
+            var method = owner.GetMethod(name, Declared, null, parameters, null);
+            Check(method != null && !method.IsStatic && method.ReturnType == typeof(void) && method.GetMethodBody() != null,
+                owner.Name + "." + name + ": installed game has the exact caller-marker signature");
+        }
+        // UnityEngine is not referenced by this project, so the pass signature is pinned by
+        // name, arity and the parameter type's full name instead of a typeof.
+        var passes = zdoMan.GetMethods(Declared).Where(method => method.Name == "ReleaseNearbyZDOS").ToArray();
+        Check(passes.Length == 1 && !passes[0].IsStatic && passes[0].ReturnType == typeof(void) &&
+            passes[0].GetParameters().Length == 2 &&
+            passes[0].GetParameters()[0].ParameterType.FullName == "UnityEngine.Vector3" &&
+            passes[0].GetParameters()[1].ParameterType == typeof(long),
+            "ZDOMan.ReleaseNearbyZDOS(Vector3,long) is the single release pass the marker binds");
+        var session = zdoMan.GetField("m_sessionID", Declared);
+        Check(session != null && !session.IsStatic && session.FieldType == typeof(long),
+            "ZDOMan.m_sessionID is the instance long that separates the server pass from a peer pass");
+        var uid = zdo.GetField("m_uid", Declared);
+        Check(uid != null && !uid.IsStatic && uid.FieldType == zdoId,
+            "ZDO.m_uid is the ZDOID the release-cycle map keys on");
+        var getOwner = zdo.GetMethod("GetOwner", Declared, null, Type.EmptyTypes, null);
+        Check(getOwner != null && !getOwner.IsStatic && getOwner.ReturnType == typeof(long),
+            "ZDO.GetOwner is the instance read the cycle map takes the pre-write owner from");
+
         // 3. Counting prefixes cannot observe, mutate or skip anything.
         Type ownership = plugin.GetType("BetterPerformance.OwnershipTelemetry", true)!;
-        foreach (string name in new[] { "OnSetOwner", "OnRequestZdo", "OnRequestOwn", "OnRequestOpen" })
+        foreach (string name in new[] { "OnRequestZdo", "OnRequestOwn", "OnRequestOpen" })
         {
             var prefix = ownership.GetMethod(name, Declared);
             Check(prefix != null && prefix.IsStatic && prefix.ReturnType == typeof(void) && prefix.GetParameters().Length == 0,
                 name + " is a parameterless void prefix that cannot skip the original");
+        }
+        // OnSetOwner reads the instance and the owner it is about to be given, so the split
+        // counters can name the caller. Both are read-only: no by-ref parameter, no result.
+        var setOwner = ownership.GetMethod("OnSetOwner", Declared);
+        Check(setOwner != null && setOwner.IsStatic && setOwner.ReturnType == typeof(void),
+            "OnSetOwner is a void prefix that cannot skip the original");
+        Check(setOwner!.GetParameters().Length == 2 && setOwner.GetParameters()[0].ParameterType == zdo &&
+            setOwner.GetParameters()[1].ParameterType == typeof(long),
+            "OnSetOwner reads the ZDO and the incoming owner and nothing else");
+        Check(!setOwner.GetParameters().Any(parameter => parameter.ParameterType.IsByRef),
+            "OnSetOwner cannot mutate the owner the native call is about to write");
+        foreach (string name in new[] { "BeforeReleaseZdos", "BeforeReleasePass", "BeforeZdoData",
+            "BeforeDisconnectSweep", "BeforeInvalidPrefab", "AfterScope", "AfterReleaseZdos" })
+        {
+            var marker = ownership.GetMethod(name, Declared);
+            Check(marker != null && marker.IsStatic && marker.ReturnType == typeof(void),
+                name + " is a void marker that cannot skip or replace the original");
+            Check(marker!.GetParameters().All(parameter => !parameter.ParameterType.IsByRef ||
+                parameter.Name == "__state"),
+                name + " moves only its own marker state");
         }
 
         // 4. Online backend and socket runtimes.
@@ -117,6 +172,40 @@ internal static class OwnershipGameTests
         }
         foreach (string name in new[] { "StartLabels", "Sample" })
             Check(host.GetMethod(name, Declared) != null, "HostTelemetry exposes " + name);
+
+        // 8. A reset sample exports the documented gauge and label set at zero, so a renamed
+        // or dropped counter breaks here instead of leaving a silent hole in a capture.
+        string[] ownershipGauges = {
+            "zdo_set_owner_calls", "zdo_set_owner_calls_release_to_zero", "zdo_set_owner_calls_release_claim_peer",
+            "zdo_set_owner_calls_release_server_pass", "zdo_set_owner_calls_zdo_data_reapply",
+            "zdo_set_owner_calls_disconnect_sweep", "zdo_set_owner_calls_invalid_prefab_destroy",
+            "zdo_set_owner_calls_other", "release_cycles", "release_cycle_released", "release_cycle_reclaimed",
+            "release_cycle_net_changes", "release_cycle_capacity_skips", "zdo_request_rpcs",
+            "item_request_own_rpcs", "container_open_requests", "ownership_other_thread_skips",
+            "ownership_probe_failures"
+        };
+        string[] ownershipLabels = {
+            "ownership_telemetry_status", "ownership_scope", "ownership_caller_split_status",
+            "ownership_markers_unavailable", "zdoman_counters_status"
+        };
+        Type number = plugin.GetType("BetterPerformance.Core.NumberValue", true)!;
+        Type text = plugin.GetType("BetterPerformance.Core.TextValue", true)!;
+        var numbers = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(number))!;
+        var texts = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(text))!;
+        ownership.GetProperty("Enabled", Declared)!.SetValue(null, false);
+        ownership.GetMethod("Reset", Declared)!.Invoke(null, null);
+        ownership.GetMethod("Sample", Declared)!.Invoke(null, new object[] { numbers, texts });
+        PropertyInfo gaugeName = number.GetProperty("Name")!, gaugeValue = number.GetProperty("Value")!;
+        PropertyInfo labelName = text.GetProperty("Name")!;
+        foreach (string name in ownershipGauges)
+        {
+            object[] rows = numbers.Cast<object>().Where(row => (string?)gaugeName.GetValue(row) == name).ToArray();
+            Check(rows.Length == 1, name + " is exported exactly once by a reset sample");
+            Check((double)gaugeValue.GetValue(rows[0])! == 0, name + " starts at zero after a reset");
+        }
+        foreach (string name in ownershipLabels)
+            Check(texts.Cast<object>().Any(row => (string?)labelName.GetValue(row) == name),
+                name + " documents the export in the capture itself");
 
         Console.WriteLine("Ownership/host/network telemetry: " + checks + " static game-contract checks; counters require Unity runtime validation.");
         return checks;

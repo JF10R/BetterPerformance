@@ -297,6 +297,11 @@ namespace BetterPerformance
                 new[] { typeof(bool), typeof(float) });
             AddResolved(harmony, logger, enabled, player, "TryPlacePiece", Metric.PiecePlace, new[] { Resolve("Piece") }, typeof(bool));
             AddResolved(harmony, logger, enabled, hud, "UpdateBuild", Metric.BuildGuiUpdate, new[] { player, typeof(bool) });
+            // The two untimed event branches of UpdatePlacement, and the piece-button rebuild
+            // reached from it through Hud.TogglePieceSelection. All three are event-rate.
+            AddResolved(harmony, logger, enabled, player, "RemovePiece", Metric.PieceRemove, Empty, typeof(bool));
+            AddResolved(harmony, logger, enabled, player, "CopyPiece", Metric.PieceCopy, Empty, typeof(bool));
+            AddResolved(harmony, logger, enabled, Resolve("BuildUi"), "OpenBuildMenu", Metric.BuildMenuOpen, Empty);
 
             // Map.
             AddResolved(harmony, logger, enabled, minimap, "Update", Metric.MinimapUpdate, Empty);
@@ -349,7 +354,18 @@ namespace BetterPerformance
             AddResolved(harmony, logger, enabled, player, "Update", Metric.PlayerUpdate, Empty);
             AddResolved(harmony, logger, enabled, player, "FixedUpdate", Metric.PlayerFixedUpdate, Empty);
             AddResolved(harmony, logger, enabled, hud, "Update", Metric.HudUpdate, Empty);
-            AddResolved(harmony, logger, enabled, Resolve("ClutterSystem"), "LateUpdate", Metric.ClutterLateUpdate, Empty);
+            // Clutter attribution: the ring sweep that admits patches, and the one patch it
+            // generates. Their sum is what a heavy ClutterLateUpdate frame is made of.
+            Type? clutter = Resolve("ClutterSystem");
+            AddResolved(harmony, logger, enabled, clutter, "LateUpdate", Metric.ClutterLateUpdate, Empty);
+            AddResolved(harmony, logger, enabled, clutter, "GeneratePatches", Metric.ClutterGeneratePatches,
+                new[] { typeof(bool), vector });
+            // GenerateVegPatch returns ClutterSystem.PatchData, a private nested type; do not
+            // depend on publicized DLLs.
+            Type? patchData = clutter == null ? null : AccessTools.Inner(clutter, "PatchData");
+            if (patchData == null) Unavailable(enabled, Metric.ClutterGenerateVegPatch);
+            else AddResolved(harmony, logger, enabled, clutter, "GenerateVegPatch", Metric.ClutterGenerateVegPatch,
+                new[] { typeof(UnityEngine.Vector2Int), typeof(float) }, patchData);
             AddResolved(harmony, logger, enabled, Resolve("WaterVolume"), "StaticUpdate", Metric.WaterStaticUpdate, Empty);
         }
 
@@ -519,6 +535,13 @@ namespace BetterPerformance
             catch { __state.Session.RecordProbeFailure(); }
         }
 
+        // Build-mode stall bucket. The histogram already counts stalls over 50 ms; the
+        // build-menu hypothesis needs the 12-42 ms band, which sits below that bound.
+        // Drained by the gameplay counters as placement_update_over_10ms.
+        private static long placementUpdateOver10Ms;
+        internal static long DrainPlacementUpdateOver10Ms() =>
+            System.Threading.Interlocked.Exchange(ref placementUpdateOver10Ms, 0);
+
         // A void finalizer observes failed calls without replacing or suppressing their exception.
         private static void Finalizer(MethodBase __originalMethod, TimingState __state, Exception? __exception)
         {
@@ -526,8 +549,13 @@ namespace BetterPerformance
             try
             {
                 if (Metrics.TryGetValue(__originalMethod, out var metric))
-                    __state.Session.Book.Record(metric, (Stopwatch.GetTimestamp() - __state.Started) * 1000.0 / Stopwatch.Frequency,
-                        __exception != null);
+                {
+                    double elapsed = (Stopwatch.GetTimestamp() - __state.Started) * 1000.0 / Stopwatch.Frequency;
+                    __state.Session.Book.Record(metric, elapsed, __exception != null);
+                    // One enum comparison per timed call. UpdatePlacement is local-player only,
+                    // so this counter is written from the main thread and nowhere else.
+                    if (metric == Metric.PlacementUpdate && elapsed > 10.0) placementUpdateOver10Ms++;
+                }
             }
             catch { __state.Session.RecordProbeFailure(); }
         }

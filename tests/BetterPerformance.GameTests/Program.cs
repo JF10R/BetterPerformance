@@ -268,3 +268,6 @@ GameplayGameTests.Run(game, plugin);
 GameplayProbesGameTests.Run(game, plugin);
 GuiSoundGameTests.Run(game, plugin);
 MiningGameTests.Run(game, plugin);
+SmelterGameTests.Run(game, plugin);
+DungeonGameTests.Run(game, plugin);
+MapPrecompressionGameTests.Run(game, plugin);

@@ -82,7 +82,14 @@ internal static class GameplayProbesGameTests
         new Contract("Player", "Update", "PlayerUpdate", None),
         new Contract("Player", "FixedUpdate", "PlayerFixedUpdate", None),
         new Contract("Hud", "Update", "HudUpdate", None),
+        new Contract("Player", "RemovePiece", "PieceRemove", None, "System.Boolean"),
+        new Contract("Player", "CopyPiece", "PieceCopy", None, "System.Boolean"),
+        new Contract("BuildUi", "OpenBuildMenu", "BuildMenuOpen", None),
         new Contract("ClutterSystem", "LateUpdate", "ClutterLateUpdate", None),
+        new Contract("ClutterSystem", "GeneratePatches", "ClutterGeneratePatches",
+            new[] { "System.Boolean", "UnityEngine.Vector3" }),
+        new Contract("ClutterSystem", "GenerateVegPatch", "ClutterGenerateVegPatch",
+            new[] { "UnityEngine.Vector2Int", "System.Single" }, "ClutterSystem/PatchData"),
         new Contract("WaterVolume", "StaticUpdate", "WaterStaticUpdate", None, "System.Void", true)
     };
 
@@ -203,6 +210,14 @@ internal static class GameplayProbesGameTests
         }
         Check(timing.GetMethod("BatchFinalizer", StaticPrivate)!.ReturnType == typeof(void),
             "BatchFinalizer cannot replace a result or exception");
+        // The build-mode stall bucket is read off the same finalizer, which must stay a void
+        // observer, and is drained by the gameplay counters as placement_update_over_10ms.
+        Check(timing.GetMethod("Finalizer", StaticPrivate)!.ReturnType == typeof(void),
+            "Finalizer cannot replace a result or exception");
+        MethodInfo? drain = timing.GetMethod("DrainPlacementUpdateOver10Ms",
+            BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+        Check(drain != null && drain.ReturnType == typeof(long) && drain.GetParameters().Length == 0,
+            "the 10 ms placement bucket is drained through a parameterless long accessor");
         Check(added.Distinct().Count() == added.Count, "no metric is claimed by two probes");
 
         // Deliberate omissions, and native methods the brief assumed that this build lacks.

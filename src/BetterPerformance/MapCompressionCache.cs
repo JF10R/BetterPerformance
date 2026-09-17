@@ -28,6 +28,12 @@ namespace BetterPerformance
         private static ZNet? world;
         private static long lookups, hits, misses, fallbacks, inputBytes, avoidedBytes;
         private static double lookupMs, storeMs, compressionMs;
+        // True while the single cached entry came from a speculative publication rather than a
+        // real save. Consumed by the first lookup that resolves it, so no hit is counted twice.
+        private static bool primed;
+        private static long primedHits, primedStale;
+        internal static long PrimedHits => primedHits;
+        internal static long PrimedStale => primedStale;
         internal static bool Enabled { get; set; }
         internal static bool Installed { get; private set; }
         internal static string Status { get; private set; } = "disabled";
@@ -150,8 +156,9 @@ namespace BetterPerformance
                 long started = Stopwatch.GetTimestamp();
                 bool hit = Cache.TryWrite(input, destinationWriter);
                 lookupMs += (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
-                if (hit) { hits++; avoidedBytes += input.Count; return; }
+                if (hit) { hits++; avoidedBytes += input.Count; if (primed) { primedHits++; primed = false; } return; }
                 misses++;
+                if (primed) { primedStale++; primed = false; }
                 long offset = destinationStream.Position;
                 long compressStarted = Stopwatch.GetTimestamp();
                 destination.WriteCompressed(source);
@@ -183,7 +190,19 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("map_cache_native_compression_ms_total", compressionMs, "ms"));
             gauges.Add(new NumberValue("map_cache_retained_bytes", Cache.RetainedBytes, "bytes"));
         }
-        internal static void Clear() { Cache.Clear(); world = null; }
+        // Speculative publication. Main thread only, never during a save, and only for the
+        // world the cache is currently keyed to. Adoption takes both arrays by reference, so
+        // the caller must have released them; equality still decides every later lookup.
+        internal static bool Adopt(byte[] input, byte[] encoded, ZNet? source)
+        {
+            if (!Installed || !Enabled || busy || Thread.CurrentThread.ManagedThreadId != mainThread) return false;
+            if (!ReferenceEquals(source, ZNet.instance)) return false;
+            if (!ReferenceEquals(world, ZNet.instance)) { Cache.Clear(); primed = false; world = ZNet.instance; }
+            if (!Cache.Adopt(input, encoded)) { primed = false; return false; }
+            primed = true;
+            return true;
+        }
+        internal static void Clear() { Cache.Clear(); primed = false; world = null; }
         internal static void Uninstall() { Enabled = false; Patches.UnpatchSelf(); Installed = false; Clear(); }
     }
 }

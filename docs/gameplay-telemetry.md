@@ -18,6 +18,8 @@ Rate classes: **event** runs on a player or network action, **batch** times one 
 | `InventoryMoveItem` | `Inventory.MoveItemToThis(Inventory,ItemDrop.ItemData)` | One drag/drop move between inventories | event |
 | `PlacementUpdate`, `PlacementGhostUpdate` | `Player.UpdatePlacement`, `UpdatePlacementGhost` | Build-mode targeting and ghost refresh, local player only | frame |
 | `PiecePlace` | `Player.TryPlacePiece(Piece)` | One placement attempt, including its ghost refresh | event |
+| `PieceRemove`, `PieceCopy` | `Player.RemovePiece`, `Player.CopyPiece` | The two other event branches of `UpdatePlacement`; both nest inside it | event |
+| `BuildMenuOpen` | `BuildUi.OpenBuildMenu` | Opening the build menu, including the piece-button rebuild it reaches through `SelectPieceList` and `UpdatePieceButtons` | event |
 | `BuildGuiUpdate` | `Hud.UpdateBuild` | Build-piece HUD refresh | frame |
 | `MinimapUpdate` | `Minimap.Update` | Whole minimap frame, one instance | frame |
 | `MinimapExploreUpdate` | `Minimap.UpdateExplore(float,Player)` | Fog-of-war exploration writes | frame |
@@ -44,11 +46,13 @@ Rate classes: **event** runs on a player or network action, **batch** times one 
 | `PlayerUpdate`, `PlayerFixedUpdate` | `Player.Update`, `Player.FixedUpdate` | One `Player` component's frame; remote players are included | frame |
 | `HudUpdate` | `Hud.Update` | Whole HUD frame, one instance | frame |
 | `ClutterLateUpdate` | `ClutterSystem.LateUpdate` | Grass and clutter patch maintenance, one instance | frame |
+| `ClutterGeneratePatches` | `ClutterSystem.GeneratePatches` | The per-frame ring sweep over the patch grid, including any patch it admits | frame |
+| `ClutterGenerateVegPatch` | `ClutterSystem.GenerateVegPatch` | Building one clutter patch: the ground queries and the prefab instantiation | event |
 | `WaterStaticUpdate` | `WaterVolume.StaticUpdate` | Static water-time step, once per frame | frame |
 
 ### Nesting
 
-These scopes overlap by construction. `ShipBatch` contains `ShipFixedUpdate` calls, `PiecePlace` contains a `PlacementGhostUpdate`, `MinimapLargeMapUpdate` contains every pin pass, `MineRockDamage` contains `MineRockDamageArea`, `CharacterDamage` contains `CharacterApplyDamage`, and `ItemDropSlowUpdate` contains `ItemAutoStack`. Never add their sums or maxima to obtain exclusive CPU time. Failed native calls keep their exceptions and are counted in `failedCalls`.
+These scopes overlap by construction. `ClutterLateUpdate` contains `ClutterGeneratePatches`, which contains at most one `ClutterGenerateVegPatch` in the normal path and up to 121 in a forced rebuild. `PlacementUpdate` contains `BuildMenuOpen`, `PieceRemove` and `PieceCopy`, which is the point of those three: their maxima are what a 41.7 ms `PlacementUpdate` frame has to be made of. `ShipBatch` contains `ShipFixedUpdate` calls, `PiecePlace` contains a `PlacementGhostUpdate`, `MinimapLargeMapUpdate` contains every pin pass, `MineRockDamage` contains `MineRockDamageArea`, `CharacterDamage` contains `CharacterApplyDamage`, and `ItemDropSlowUpdate` contains `ItemAutoStack`. Never add their sums or maxima to obtain exclusive CPU time. Failed native calls keep their exceptions and are counted in `failedCalls`.
 
 ### What is deliberately not hooked
 

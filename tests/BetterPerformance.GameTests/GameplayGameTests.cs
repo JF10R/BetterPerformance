@@ -22,6 +22,9 @@ internal static class GameplayGameTests
         "smelter_updates", "smelter_catchup_items_sum", "smelter_catchup_items_max", "smelter_spawns",
         "fireplace_fuel_adds", "cooking_spawns", "beehive_extracts",
         "placement_ghost_updates", "placement_ghost_frames", "pieces_placed", "pieces_removed",
+        "snap_pieces_scanned", "snap_points_enumerated", "ghost_clipping_tests", "placement_update_over_10ms",
+        "clutter_patches_generated", "clutter_rebuild_all_frames", "clutter_ground_queries",
+        "clutter_objects_instantiated", "clutter_heightmap_not_ready_frames", "clutter_patches_timed_out",
         "tree_damage_rpcs", "tree_logs_spawned", "rock_damage_rpcs", "rock_area_destroys",
         "destructible_destroys", "attacks_started", "hits_dealt", "drop_on_destroyed_events", "drops_spawned",
         "minimap_explore_updates", "minimap_explore_scans", "minimap_fog_applies",
@@ -60,6 +63,15 @@ internal static class GameplayGameTests
             new[] { "Piece", "UnityEngine.Vector3", "UnityEngine.Quaternion", "System.Boolean", "System.Boolean" }),
         ("Player", "RemovePiece", "System.Boolean", new string[0]),
         ("Player", "IsAttachedToShip", "System.Boolean", new string[0]),
+        ("Player", "TestGhostClipping", "System.Boolean", new[] { "UnityEngine.GameObject", "System.Single" }),
+        ("Piece", "GetSnapPoints", "System.Void", new[] { "UnityEngine.Vector3", "System.Single",
+            "System.Collections.Generic.List`1<UnityEngine.Transform>", "System.Collections.Generic.List`1<Piece>" }),
+        ("ClutterSystem", "UpdateGrass", "System.Void",
+            new[] { "System.Single", "System.Boolean", "UnityEngine.Vector3" }),
+        ("ClutterSystem", "GenerateVegPatch", "ClutterSystem/PatchData",
+            new[] { "UnityEngine.Vector2Int", "System.Single" }),
+        ("ClutterSystem", "IsHeightmapReady", "System.Boolean", new string[0]),
+        ("ClutterSystem", "TimeoutPatches", "System.Void", new[] { "System.Single" }),
         ("TreeBase", "RPC_Damage", "System.Void", new[] { "System.Int64", "HitData" }),
         ("TreeBase", "SpawnLog", "System.Void", new[] { "UnityEngine.Vector3" }),
         ("MineRock5", "RPC_Damage", "System.Void", new[] { "System.Int64", "HitData", "System.Int32" }),
@@ -97,7 +109,8 @@ internal static class GameplayGameTests
                 Check(owner != null, typeName + " is present in the installed game");
                 MethodDefinition[] matches = owner!.Methods.Where(candidate =>
                     candidate.Name == methodName &&
-                    candidate.IsStatic == (typeName == "InventoryGui" && methodName == "IsVisible") &&
+                    candidate.IsStatic == ((typeName == "InventoryGui" && methodName == "IsVisible") ||
+                        (typeName == "Piece" && methodName == "GetSnapPoints")) &&
                     candidate.ReturnType.FullName == returns &&
                     candidate.Parameters.Select(parameter => parameter.ParameterType.FullName).SequenceEqual(parameters))
                     .ToArray();
@@ -111,6 +124,26 @@ internal static class GameplayGameTests
                 candidate.Name == "Start" && !candidate.IsStatic &&
                 candidate.ReturnType.FullName == "System.Boolean" && candidate.Parameters.Count == 9).ToArray();
             Check(attacks.Length == 1, "Attack.Start is the single nine-argument bool instance method the shape match finds");
+
+            // GetGroundInfo returns four values through out parameters whose types a
+            // standalone CLR cannot load, so the module matches it on shape as well.
+            MethodDefinition[] ground = module.GetType("ClutterSystem")!.Methods.Where(candidate =>
+                candidate.Name == "GetGroundInfo" && !candidate.IsStatic &&
+                candidate.ReturnType.FullName == "System.Boolean" && candidate.Parameters.Count == 5).ToArray();
+            Check(ground.Length == 1, "ClutterSystem.GetGroundInfo is the single five-argument bool instance method the shape match finds");
+            Check(ground[0].Parameters.Skip(1).All(parameter => parameter.IsOut),
+                "ClutterSystem.GetGroundInfo returns its four results through out parameters, so the counter reads none of them");
+
+            FieldDefinition? patchObjects = module.GetType("ClutterSystem/PatchData")!.Fields
+                .SingleOrDefault(field => field.Name == "m_objects");
+            Check(patchObjects != null && patchObjects.FieldType.FullName.StartsWith(
+                    "System.Collections.Generic.List`1<", StringComparison.Ordinal),
+                "ClutterSystem.PatchData.m_objects is the generic list whose Count the instantiation counter reads");
+            FieldDefinition? timedOut = module.GetType("ClutterSystem")!.Fields
+                .SingleOrDefault(field => field.Name == "m_tempToRemovePair");
+            Check(timedOut != null && timedOut.FieldType.FullName.StartsWith(
+                    "System.Collections.Generic.List`1<", StringComparison.Ordinal),
+                "ClutterSystem.m_tempToRemovePair is the generic list whose Count the timeout counter reads");
 
             FieldDefinition? ghost = module.GetType("Player")!.Fields.SingleOrDefault(field => field.Name == "m_placementGhost");
             Check(ghost != null && ghost.FieldType.FullName == "UnityEngine.GameObject",
