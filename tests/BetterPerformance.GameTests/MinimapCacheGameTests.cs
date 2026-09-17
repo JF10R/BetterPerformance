@@ -131,6 +131,12 @@ internal static class MinimapCacheGameTests
             "Default configuration leaves GenerateWorldMap unpatched by this module.");
         Check((string)module.GetProperty("Status", privateStatic)!.GetValue(null)! == "disabled_at_startup",
             "Status reports the default off state.");
+        // The plugin's own WorldMapGenerate timing probe patches the same method under the
+        // main plugin id; it must be accepted, and nothing else may be.
+        var accepted = (string[])module.GetField("AcceptedOwners", privateStatic)!.GetValue(null)!;
+        Check(accepted.Length == 2 && accepted.Contains("jf10r.BetterPerformance.MinimapTextureCache") &&
+            accepted.Contains("jf10r.BetterPerformance"), "The accepted GenerateWorldMap owners are exactly the module and the plugin itself.");
+
         var enabledEntry = config.Bind("MinimapCache", "Enabled", false);
         var modeEntry = config.Bind("MinimapCache", "Mode", "shadow");
         Check(!enabledEntry.Value && modeEntry.Value == "shadow", "Repository defaults are off and shadow-only.");

@@ -266,3 +266,5 @@ ReplicationGameTests.Run(game, plugin);
 TerrainGameTests.Run(game, plugin);
 GameplayGameTests.Run(game, plugin);
 GameplayProbesGameTests.Run(game, plugin);
+GuiSoundGameTests.Run(game, plugin);
+MiningGameTests.Run(game, plugin);

@@ -45,6 +45,10 @@ set of loaded BepInEx plugin GUIDs and versions. World name is never part of the
 - Behavioural delta on a verified hit: `DeleteMapTextureData` and `SaveMapTextureDataToDisk`
   do not run, so the native cache files are left as they were. They are unreadable on a
   joined client regardless.
+- The plugin's own `WorldMapGenerate` timing probe patches `GenerateWorldMap` under the main
+  plugin id and is accepted as an owner; every other owner is still refused. On a cache hit
+  the prefix returns before the native body, so that probe records the cache-serve time and
+  not native generation.
 
 ## Telemetry
 

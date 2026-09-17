@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.6";
+        public const string PluginVersion = "0.4.7";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -90,12 +90,23 @@ namespace BetterPerformance
             // Replication cadence and bird velocity stay behind their own [Replication] keys.
             ReplicationCadence.Install(Config, Logger);
             TerrainSaveCoalescing.Install(Config, Logger);
+            // GUI group-sound deduplication and mined-drop placement stay behind their own keys.
+            GuiSoundDeduplication.Install(Config, Logger);
+            MiningDropPlacement.Install(Config, Logger);
             new Terminal.ConsoleCommand("bp_budget", "Experimental object budget: on | off | status (installed at startup; local process only)",
                 (Terminal.ConsoleEvent)(args =>
                 {
                     if (args.Args.Length == 2 && (args.Args[1] == "on" || args.Args[1] == "off"))
                         SetObjectCreationBudgetEnabled(args.Args[1] == "on");
                     args.Context.AddString("Object budget: " + ObjectCreationBudget.Status + "; active=" + ObjectCreationBudget.Enabled);
+                }));
+            new Terminal.ConsoleCommand("bp_mining", "Experimental mined-drop hit-point placement: on | off | status (installed at startup; local process only)",
+                (Terminal.ConsoleEvent)(args =>
+                {
+                    if (args.Args.Length == 2 && (args.Args[1] == "on" || args.Args[1] == "off"))
+                        SetMiningDropPlacementEnabled(args.Args[1] == "on");
+                    args.Context.AddString("Mined-drop placement: " + MiningDropPlacement.Status + "; active=" + MiningDropPlacement.Enabled
+                        + "; overridden=" + MiningDropPlacement.OverriddenCount() + "/" + MiningDropPlacement.TrackedCount);
                 }));
             if (!captureEnabled.Value) { Logger.LogInfo("Diagnostics disabled. No probes installed."); return; }
             instances = AccessTools.Field(typeof(ZNetScene), "m_instances");
@@ -155,6 +166,16 @@ namespace BetterPerformance
             if (instance == null || !ObjectCreationBudget.Installed ||
                 System.Threading.Thread.CurrentThread.ManagedThreadId != instance.mainThreadId) return false;
             ObjectCreationBudget.Enabled = enabled;
+            return true;
+        }
+
+        // Same main-thread-only contract as the object budget: applies or restores the
+        // field override on every tracked live instance so one session can A/B the look.
+        public static bool SetMiningDropPlacementEnabled(bool enabled)
+        {
+            if (instance == null || !MiningDropPlacement.Installed ||
+                System.Threading.Thread.CurrentThread.ManagedThreadId != instance.mainThreadId) return false;
+            MiningDropPlacement.SetEnabled(enabled);
             return true;
         }
 
@@ -287,7 +308,8 @@ namespace BetterPerformance
                 new TextValue("configuration_semantics", "graphics_applied_event_plus_poll; raw_player_and_active_are_distinct; synchronized_simulation_is_separate; poll_changes_are_observation_times; max_128_field_changes_per_export"),
                 new TextValue("game_version", global::Version.GetVersionString(false)),
                 new TextValue("mode", ObjectCreationBudget.Installed || InitialLoadingOptimization.Installed || FastMapSerialization.Installed || MapCompressionCache.Installed || PackageCopyOptimization.Installed
-                    || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || TerrainSaveCoalescing.Enabled ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
+                    || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || TerrainSaveCoalescing.Enabled
+                    || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
                 new TextValue("map_serialization_status", FastMapSerialization.Status),
                 new TextValue("queue_semantics", "socket API result; active mods may adjust it or make it negative"),
                 new TextValue("percentiles", "approximate upper bounds from fixed logarithmic buckets"),
@@ -321,6 +343,8 @@ namespace BetterPerformance
             ReplicationCadence.Reset();
             ReplicationTelemetry.Reset();
             TerrainSaveCoalescing.Reset();
+            GuiSoundDeduplication.Reset();
+            MiningDropPlacement.Reset();
             TerrainTelemetry.Reset();
             GameplayTelemetry.Reset();
             RenderTelemetry.Reset();
@@ -361,6 +385,8 @@ namespace BetterPerformance
             ReplicationCadence.Sample(gauges, labels);
             ReplicationTelemetry.Sample(gauges, labels);
             TerrainSaveCoalescing.Sample(gauges, labels);
+            GuiSoundDeduplication.Sample(gauges, labels);
+            MiningDropPlacement.Sample(gauges, labels);
             TerrainTelemetry.Sample(gauges, labels);
             GameplayTelemetry.Sample(gauges, labels);
             AttributionTelemetry.Sample(gauges, labels);
@@ -468,6 +494,8 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { TerrainSaveCoalescing.Sample(gauges, labels); TerrainTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
+            try { GuiSoundDeduplication.Sample(gauges, labels); MiningDropPlacement.Sample(gauges, labels); }
+            catch { session.RecordProbeFailure(); }
             try { GameplayTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             AttributionSummary[]? finalAttributions = null;
@@ -511,6 +539,8 @@ namespace BetterPerformance
             ReplicationCadence.Uninstall();
             ReplicationTelemetry.Uninstall();
             TerrainSaveCoalescing.Uninstall();
+            GuiSoundDeduplication.Uninstall();
+            MiningDropPlacement.Uninstall();
             TerrainTelemetry.Uninstall();
             GameplayTelemetry.Uninstall();
             AttributionTelemetry.Uninstall();

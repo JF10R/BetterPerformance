@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.4.7
+
+- Add opt-in GUI group-sound deduplication: `InventoryGui.SetActiveGroup` creates the group effect even when the requested group is already active, stacking a second sound on the button click for the Craft/Upgrade tabs and recipe clicks; a prefix clears `playSound` in exactly that case and leaves the cycling path and every real group change alone.
+- Add opt-in mined-drop placement at the hit point: clear the public `m_hitEffectAreaCenter` prefab field on the listed `MineRock5` prefabs so drops and hit effects use the pickaxe impact point instead of the destroyed chunk centre, which stops buried chunks dropping ore underground. Owner-side field override; `bp_mining on | off | status` toggles it in a running session for an A/B.
+- Fix the minimap texture cache reporting `foreign_generate_patch` at every join: the plugin's own `WorldMapGenerate` timing probe patches `Minimap.GenerateWorldMap` under the main plugin id and is now an accepted owner, so the cache stores and serves again. Every other owner is still refused.
+- Add 57 game-contract checks read from assembly metadata for the two new modules, and the documentation covering both. Both are off by default and self-report their status.
+
 ### 0.4.6
 
 - Add 52 gameplay-loop timing probes: inventory and chest GUI, container interactions and changes, building placement, minimap explore and large map, ships and carts, tree/rock/destructible/wear/character damage and destruction, attacks, loot drops, smelter spawns, MonoUpdaters batches (crafting stations, SFX, instance renderer, smoke, floating, ships, transform and animation sync), item slow updates and auto-stacking, player/HUD/clutter/water updates.

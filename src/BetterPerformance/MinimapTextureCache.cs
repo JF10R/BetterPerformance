@@ -255,8 +255,12 @@ namespace BetterPerformance
             return steps;
         }
 
+        // The plugin's own WorldMapGenerate timing probe patches the same method under the
+        // main plugin id, and it is not a foreign rewrite; every other owner still is.
+        internal static readonly string[] AcceptedOwners = { Patches.Id, Plugin.PluginId };
+
         private static bool Compatible() => Generate != null &&
-            (Harmony.GetPatchInfo(Generate)?.Owners.All(owner => owner == Patches.Id) ?? true);
+            (Harmony.GetPatchInfo(Generate)?.Owners.All(owner => Array.IndexOf(AcceptedOwners, owner) >= 0) ?? true);
 
         // ---------------------------------------------------------------- key
 

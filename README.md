@@ -2,7 +2,7 @@
 
 Performance diagnostics and experimental, measurable optimizations for Valheim clients and dedicated servers.
 
-**Status: experimental plugin, version 0.4.6. Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
+**Status: experimental plugin, version 0.4.7. Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
 
 ### TL;DR: what it improves and who benefits
 
@@ -75,6 +75,7 @@ The diagnostics phase is intended to coexist with BetterNetworking. Queue measur
 - [Replication cadence and bird velocity](docs/replication-cadence.md)
 - [Server owner-grant expedite](docs/ownership-expedite.md)
 - [Terrain neighbour-save coalescing](docs/terrain-save-coalescing.md)
+- [GUI group sound and mined-drop placement](docs/gui-sound-and-drop-placement.md)
 - [Gameplay-loop timing probes](docs/gameplay-telemetry.md) and [gameplay counters](docs/gameplay-counters.md)
 - [Research: shared chest for two players in ValheimPlus](docs/shared-chest-research-2026-09-15.md)
 - [Initial loading acceleration: enable, disable and measure](docs/initial-loading.md)
