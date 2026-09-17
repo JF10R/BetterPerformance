@@ -47,6 +47,15 @@ This is deliberately conservative and can disable acceleration after a game or
 mod update. An unchanged UI checkbox alone does not prove acceleration is active;
 the recorded status is authoritative.
 
+The Valheim 1.0.14 update (2026-09-17) broke both fingerprints and they were re-pinned.
+`CreateLocalZones` and `PokeLocalZone` kept their exact body sizes, 179 and 97 bytes,
+and the decompiled bodies still poke the centre zone first, scan the near square and
+return true on the first registration — the repeat-call safety this module depends on.
+The hash covers raw IL including metadata tokens, which renumber on any change
+elsewhere in the assembly, so the break is token churn. The previous build's IL was no
+longer available to diff against, so this is an equivalence argument from body size and
+current source, not a byte comparison.
+
 ### Measurements
 
 Existing captures include:

@@ -47,6 +47,26 @@ Same day, after the Scout developer's fixes, with the per-repo `repo-scout` serv
 - **Query expansion adds noise on exact queries.** `Plugin.cs Awake MiningDropPlacement.Install` reported `QUERY_EXPANSION added=[cleanup destructor free]` and `@certainty low`, although the top result was right. Expansion should be skipped when the query contains an exact identifier that matched.
 - **New file coverage was immediate.** Files created minutes earlier by other agents were indexed and outlined at D2 with correct line ranges, including nested classes and a coroutine.
 
+### Verification after the reconnect, 2026-09-17 (later the same day)
+
+Every friction above replayed with the same query text after `repo-scout index` on both indexes (cortex 959 and 9,066 symbols, incremental in 115 ms).
+
+| # | Friction | Now |
+| --- | --- | --- |
+| 1 | Literal `new Harmony(Plugin.PluginId` missed | **Fixed.** `EXACT_MATCH matches=28`, every declaration listed with file and line |
+| 2 | `cognitive_read` focus fell on the first token occurrence | **Fixed.** `@focus:definition-preferred`, window centred on the definition |
+| 3 | References truncated with "+8 more" | **Fixed.** All 18 call sites listed |
+| 4 | Fields absent from the symbol index | **Not fixed.** `m_hitEffectAreaCenter` is still `INDEX GAP` in references mode and `EXACT_MISS` under `field:` in structure mode; the raw token hits remain correct |
+| 5 | Name-approx callee noise on decompiled code | **Fixed.** `callees: 0 (name-approx) (+3 low-precision withheld)` |
+| 6 | Content evidence showed the class header | **Fixed** for the ranked result, whose window now contains the matching line; the `EVIDENCE`/`DEF` block under it still cites a different symbol (`ValidateGenerateShape` L116) than the result above it |
+| 7 | Gate blind without the per-repo server | **Design unchanged**; with the server connected the gate is correct in both directions: an unsurfaced doc is refused, a surfaced file is served |
+| — | MCP not seeing the CLI reindex | **Fixed.** Status shows the CLI's snapshot id; no `graph_unproven` on new files |
+| — | `@mind` line at 0 lines and 0 defs | **Fixed.** 49,097 lines / 714 defs and 136,516 / 4,520 |
+| — | Markdown in the content lane | **Fixed.** `### 0.4.7` resolves to `CHANGELOG.md:11` as an exact literal |
+| — | Query expansion on exact queries | **Fixed.** `QUERY_EXPANSION skipped reason=exact-token-hit`; the response still says `@certainty low` with the right file on top |
+
+One side effect of the new literal lane: a multi-word query that happens to appear verbatim in a document (this file, which quotes the queries) returns only that literal hit and skips the ranked code lane. Documenting a query now hides its code result; a `LITERAL_MISS`-style fallthrough after exact hits in non-code files would keep both.
+
 ### Not tested
 
 CLI indexing, the scout-gate hook (not installed on this repo), cross-repo `references` with both indexes passed as an array, artifact views, `note_finding` / `recall_investigation`, and any timing comparison against a previous build.

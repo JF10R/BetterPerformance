@@ -19,7 +19,7 @@ It rebuilds the plugin against the installed assemblies with warnings as errors,
 Read the output in this order:
 
 1. Build errors: a removed or renamed type or member. The compiler names it; fix the reference and re-check the decompiled method before trusting the fix.
-2. Harness failures (`exit 127`): a contract assertion failed. The message names the module and the expectation.
+2. Harness failures: every module runs even when an earlier one fails, each failure prints as `FAIL <module>: <expectation>`, and the run ends with one `FAILED game contracts (n): …` line and exit 1. Read the whole list, not the first entry. Before 2026-09-17 the first failure threw and silently skipped every module after it, which hid a second drifted contract for an unknown number of runs.
 3. Contract warnings the harness prints while still passing: modules that report `unavailable`/`unsupported_layout` against the real assembly. `STATIC ONLY` and `type_unavailable` on the standalone CLR are expected for Unity and Steam interface types and are not update failures.
 
 ### 3. Fix a broken contract
@@ -62,5 +62,13 @@ Then read the captures with `scripts/summarize_capture.py` and confirm: `probe_f
 | Owner-grant expedite | `ZDOMan.RPC_ZDOData` apply sites, `ZDO.SetOwnerInternal` | `OwnershipExpedite.cs` |
 | Terrain coalescing | `TerrainComp.PaintCleared` local functions and `Save` gate | `TerrainSaveCoalescing.cs` |
 | Attribution | `ZRoutedRpc.HandleRoutedRPC`, `RoutedRPCData` fields, `ZDO.Serialize` | `AttributionTelemetry.cs` |
+| Loading details | Which subpaths `AltBiomeWorldData.VerifyBiomeData` calls | `LoadingDetailsTelemetry.cs` |
+| Loot visibility | `MineRock5.RPC_SetAreaHealth`, the private `ZDOMan.CreateNewZDO(ZDOID, Vector3, int)` and its zero-hash arrival call site | `LootVisibilityTelemetry.cs` |
+
+A pinned raw-IL hash is the most update-fragile contract in the repo: the bytes include
+metadata tokens, which renumber whenever anything else in the assembly changes. An unchanged
+body size beside a changed hash points at token churn rather than a logic change — evidence
+worth stating, never proof on its own. Confirm against the decompiled body and the module's
+documented invariants before re-pinning.
 
 A green harness proves the contracts still hold on the installed build. It does not prove performance; that needs the isolated session and then a real session with the same A/B discipline as before.
