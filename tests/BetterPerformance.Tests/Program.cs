@@ -16,7 +16,7 @@ internal static class Program
             BoundedQueue, WriterFailure, BoundedFailureAccounting, FileLimit, UniqueFiles, CaptureClock,
             ResidentMemory, MarkerNames, CreationBudgetProgress, CreationBudgetBoundaries,
             AdaptiveCreationQuota, LootPriorityTiers, LootPriorityFailure, LootPriorityFairness,
-            CaptureStorageLimit, LootTelemetryTests.Run, ContinuousSegmentExport,
+            CaptureStorageLimit, LootTelemetryTests.Run, LootVisibilityTests.Run, ContinuousSegmentExport,
             SlowOperationTests.ThresholdBoundary, SlowOperationTests.FailureBelowThreshold,
             SlowOperationTests.ExclusionsAndBounds, SlowOperationTests.WorkerAndLoopInterpretation,
             SlowOperationTests.IndependentSnapshotsAndValidation, RecorderSampling, CollectorBackoff,

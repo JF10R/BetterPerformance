@@ -2,7 +2,7 @@
 
 Performance diagnostics and experimental, measurable optimizations for Valheim clients and dedicated servers.
 
-**Status: experimental plugin, version 0.4.8. Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
+**Status: experimental plugin, version 0.4.9, verified against Valheim 1.0.14 (2026-09-17). Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
 
 ### TL;DR: what it improves and who benefits
 
@@ -34,6 +34,7 @@ The initial focus is measuring a client and dedicated server running on the same
 - Native Steam transport counters, valid resident-memory readings, scenario markers and GC/boundary-crossing loop identification.
 - Optional continuous capture with linked segments and a directory allowance; no QA harness required.
 - Bounded passive loot-queue observations and structured slow-operation summaries with sampled context.
+- Bounded loot-visibility observations: from a mined chunk disappearing to its ore being created locally, split into a network and a local-creation leg. Client only; attribution is positional, not by identity.
 - Reduced recorder self-measurement, smaller loot scans, collection backoff after costly polls and below-normal export priority.
 - Bounded local graphics configuration history, with distinct player preferences, active settings and synchronized simulation distances.
 - Object-budget tradeoffs, aggregate AI/pathfinding/spawn observations and Windows main-thread CPU accounting.
@@ -86,6 +87,7 @@ The diagnostics phase is intended to coexist with BetterNetworking. Queue measur
 - [Native biome cache findings and safe reuse constraints](docs/native-biome-cache-research.md)
 - [Frontier loading research](docs/fast-loading-frontier-2026-09-15.md)
 - [Real-session profile, slow operations and loot diagnostics](docs/play-session.md)
+- [Mined-loot visibility latency](docs/loot-visibility-latency-2026-09-17.md)
 - [Configuration history and diagnostic interpretation](docs/configuration-history.md)
 - [Frontier research and next experiments](docs/frontier-research-2026-09-15.md)
 - [0.4.0 feature disposition and implementation](docs/frontier-implementation-0.4.0.md)

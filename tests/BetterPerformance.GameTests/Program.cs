@@ -247,27 +247,47 @@ finally
 }
 Console.WriteLine("PASS eight exact save/RPC/replication timing registrations; offline JIT limitations=" + offlineJitLimitations + "; no game methods invoked");
 Console.WriteLine("PASS " + checks + " checks; " + gameDirectory);
-AiGameTests.Run(game, plugin);
-FastMapSerializationTests.Run(game, plugin);
-PackageCopyGameTests.Run(game, plugin);
-MapCompressionCacheGameTests.Run(game, plugin);
-MinimapCacheGameTests.Run(game, plugin);
-ActionGameTests.Run(game, plugin);
-BudgetPreparationGameTests.Run(game, plugin);
-LoadingGameTests.Run(game, plugin);
-LoadingDetailsGameTests.Run(game, plugin);
-InitialLoadingGameTests.Run(game, plugin);
-OwnershipGameTests.Run(game, plugin);
-OwnershipExpediteGameTests.Run(game, plugin);
-SimulationGameTests.Run(game, plugin);
-AttributionGameTests.Run(game, plugin);
-CloudWriteGameTests.Run(game, plugin, managedDirectory);
-ReplicationGameTests.Run(game, plugin);
-TerrainGameTests.Run(game, plugin);
-GameplayGameTests.Run(game, plugin);
-GameplayProbesGameTests.Run(game, plugin);
-GuiSoundGameTests.Run(game, plugin);
-MiningGameTests.Run(game, plugin);
-SmelterGameTests.Run(game, plugin);
-DungeonGameTests.Run(game, plugin);
-MapPrecompressionGameTests.Run(game, plugin);
+// One drifted contract used to abort the process and silently skip every module after it,
+// which is the opposite of what a post-update check is for. Each module now runs, reports,
+// and a single non-zero exit at the end names all of them.
+var contractFailures = new List<string>();
+void Module(string name, Action run)
+{
+    try { run(); }
+    catch (Exception exception)
+    {
+        contractFailures.Add(name);
+        Console.WriteLine("FAIL " + name + ": " + exception.Message);
+    }
+}
+Module("Ai", () => AiGameTests.Run(game, plugin));
+Module("FastMapSerialization", () => FastMapSerializationTests.Run(game, plugin));
+Module("PackageCopy", () => PackageCopyGameTests.Run(game, plugin));
+Module("MapCompressionCache", () => MapCompressionCacheGameTests.Run(game, plugin));
+Module("MinimapCache", () => MinimapCacheGameTests.Run(game, plugin));
+Module("Action", () => ActionGameTests.Run(game, plugin));
+Module("BudgetPreparation", () => BudgetPreparationGameTests.Run(game, plugin));
+Module("Loading", () => LoadingGameTests.Run(game, plugin));
+Module("LoadingDetails", () => LoadingDetailsGameTests.Run(game, plugin));
+Module("InitialLoading", () => InitialLoadingGameTests.Run(game, plugin));
+Module("Ownership", () => OwnershipGameTests.Run(game, plugin));
+Module("OwnershipExpedite", () => OwnershipExpediteGameTests.Run(game, plugin));
+Module("Simulation", () => SimulationGameTests.Run(game, plugin));
+Module("Attribution", () => AttributionGameTests.Run(game, plugin));
+Module("CloudWrite", () => CloudWriteGameTests.Run(game, plugin, managedDirectory));
+Module("Replication", () => ReplicationGameTests.Run(game, plugin));
+Module("Terrain", () => TerrainGameTests.Run(game, plugin));
+Module("Gameplay", () => GameplayGameTests.Run(game, plugin));
+Module("GameplayProbes", () => GameplayProbesGameTests.Run(game, plugin));
+Module("GuiSound", () => GuiSoundGameTests.Run(game, plugin));
+Module("Mining", () => MiningGameTests.Run(game, plugin));
+Module("LootVisibility", () => LootVisibilityGameTests.Run(game, plugin));
+Module("Smelter", () => SmelterGameTests.Run(game, plugin));
+Module("Dungeon", () => DungeonGameTests.Run(game, plugin));
+Module("MapPrecompression", () => MapPrecompressionGameTests.Run(game, plugin));
+if (contractFailures.Count > 0)
+{
+    Console.WriteLine("FAILED game contracts (" + contractFailures.Count + "): " + string.Join(", ", contractFailures));
+    Environment.Exit(1);
+}
+Console.WriteLine("PASS all module game contracts; " + gameDirectory);

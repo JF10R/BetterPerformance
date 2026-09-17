@@ -39,6 +39,9 @@ namespace BetterPerformance
         [ThreadStatic] private static int depth;
         [ThreadStatic] private static TerrainComp? owner;
         [ThreadStatic] private static List<TerrainComp>? pending;
+        // The gate hash each pending component carried before this batch advanced it. A
+        // deferred write that never lands must not leave the gate claiming it did.
+        [ThreadStatic] private static List<int>? pendingPreviousHash;
 
         private static long batches, deferred, flushed, gateSkips, nativeInsideBatch, fallbacks;
 
@@ -229,10 +232,14 @@ namespace BetterPerformance
                 if (!initialized!(__instance) || instanceView is null || !instanceView.IsValid() || !instanceView.IsOwner())
                     return true;
                 int hash = paintOnly ? computeHash!(__instance) : 0;
-                if (paintOnly && hash == lastHash!(__instance)) { Interlocked.Increment(ref gateSkips); return false; }
+                int previous = lastHash!(__instance);
+                if (paintOnly && hash == previous) { Interlocked.Increment(ref gateSkips); return false; }
                 lastHash!(__instance) = hash;
                 var list = pending ?? (pending = new List<TerrainComp>(8));
-                if (!list.Contains(__instance)) list.Add(__instance);
+                var previousHashes = pendingPreviousHash ?? (pendingPreviousHash = new List<int>(8));
+                // Only the first deferral in a batch records the restore point: it is the
+                // gate value from before any of this batch's writes were skipped.
+                if (!list.Contains(__instance)) { list.Add(__instance); previousHashes.Add(previous); }
                 Interlocked.Increment(ref deferred);
                 return false;
             }
@@ -245,8 +252,10 @@ namespace BetterPerformance
         private static void Flush()
         {
             var list = pending;
+            var previousHashes = pendingPreviousHash;
             if (list == null || list.Count == 0) return;
-            if (nativeSave == null || lastHash == null) { list.Clear(); return; }
+            if (nativeSave == null || lastHash == null || previousHashes == null || previousHashes.Count != list.Count)
+            { list.Clear(); previousHashes?.Clear(); return; }
             for (int index = 0; index < list.Count; index++)
             {
                 TerrainComp component = list[index];
@@ -257,9 +266,17 @@ namespace BetterPerformance
                     lastHash!(component) = hash;
                     Interlocked.Increment(ref flushed);
                 }
-                catch (Exception exception) { Fail(exception); }
+                catch (Exception exception)
+                {
+                    // The deferred write did not land. Roll the gate back to the value it
+                    // held before this batch, or the next native paint-only Save sees an
+                    // unchanged hash, early-returns, and the edit is lost on reload.
+                    try { lastHash!(component) = previousHashes[index]; } catch { }
+                    Fail(exception);
+                }
             }
             list.Clear();
+            previousHashes.Clear();
         }
 
         private static void Fail(Exception exception)
@@ -303,6 +320,7 @@ namespace BetterPerformance
             depth = 0;
             owner = null;
             pending?.Clear();
+            pendingPreviousHash?.Clear();
             Status = "disabled";
             Release();
         }

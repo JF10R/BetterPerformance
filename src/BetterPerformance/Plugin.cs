@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.8";
+        public const string PluginVersion = "0.4.9";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -137,6 +137,7 @@ namespace BetterPerformance
                 LoadingDetailsTelemetry.Enabled = LoadingDetailsTelemetry.Installed;
             }
             LootQueueTelemetry.ConfigureAndInstall(Config, Logger);
+            LootVisibilityTelemetry.Install(Config, Logger);
             if (Config.Bind("Diagnostics", "LocalActionOutcomesEnabled", true,
                 "Observe bounded local pickup and container outcomes. Excludes ambiguous matches; does not infer remote-client latency.").Value)
             {
@@ -360,6 +361,7 @@ namespace BetterPerformance
             previousLoop = 0;
             for (int i = 0; i < previousGc.Length; i++) previousGc[i] = GC.CollectionCount(i);
             LootQueueTelemetry.Reset();
+            LootVisibilityTelemetry.Reset();
             ObjectCreationBudget.ResetTelemetry();
             AiTelemetry.Reset();
             ThreadCpuTelemetry.Reset();
@@ -396,6 +398,7 @@ namespace BetterPerformance
             var labels = new List<TextValue> { new TextValue("role", Role()) };
             ObjectCreationBudget.Sample(gauges, labels);
             LootQueueTelemetry.Sample(gauges, labels);
+            LootVisibilityTelemetry.Sample(gauges, labels);
             AiTelemetry.Sample(gauges, labels);
             SimulationPopulationTelemetry.Sample(gauges, labels);
             ThreadCpuTelemetry.Sample(gauges, labels);
@@ -529,6 +532,8 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { GameplayTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
+            try { LootVisibilityTelemetry.Sample(gauges, labels); }
+            catch { session.RecordProbeFailure(); }
             AttributionSummary[]? finalAttributions = null;
             try { AttributionTelemetry.Sample(gauges, labels); finalAttributions = AttributionTelemetry.Drain(); }
             catch { session.RecordProbeFailure(); }
@@ -544,6 +549,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             session.Export(gauges, labels, final: true, attributions: finalAttributions);
             LootQueueTelemetry.Reset();
+            LootVisibilityTelemetry.Reset();
             Logger.LogInfo("Capture stopped: " + reason + ". Export is finishing in the background.");
         }
 
@@ -558,6 +564,7 @@ namespace BetterPerformance
             harmony.UnpatchSelf();
             GraphicsSettingsManager.GraphicsSettingsChanged -= GraphicsSettingsApplied;
             LootQueueTelemetry.Uninstall();
+            LootVisibilityTelemetry.Uninstall();
             ObjectCreationBudget.Uninstall();
             FastMapSerialization.Uninstall();
             MapPrecompression.Uninstall();

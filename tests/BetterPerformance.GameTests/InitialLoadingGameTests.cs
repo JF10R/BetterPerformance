@@ -6,10 +6,10 @@ using HarmonyLib;
 internal static class InitialLoadingGameTests
 {
     private const BindingFlags PrivateStatic = BindingFlags.NonPublic | BindingFlags.Static;
-    private const string ClientCreateHash = "4299039cd6ca931e6193b156508a1543d17a0736f5a3fbb2f62b7e92a1118640";
-    private const string ServerCreateHash = "4505712fe270acafc2c24d845780bbc2eaff1e30244fe0bb15fc5919024eee33";
-    private const string ClientPokeHash = "4b71d352cb73ab5cf8dbcbd97b5744dc3eb24d1a49167ab0708d9a07841fbc6a";
-    private const string ServerPokeHash = "43b1f144e9293acd73635f11bb91d3e65f0b7ca06a76a01b18b58c1ec4b8ef8e";
+    private const string ClientCreateHash = "d457d6f1f157963372d7c7d92f7bf7092cdab8bcafc34007e79904d08e2b7304";
+    private const string ServerCreateHash = "a01b821dd08827eef537785d51c1c0d6a96d14eb3444b300393328fd4266f885";
+    private const string ClientPokeHash = "f1b7dc46c31c98555c403a22460d306a5c9a090dd8730ba1d2ff43368a9ff56e";
+    private const string ServerPokeHash = "4868d62752dd78b733064dd7972828236216195cc92fa576ea4bdae01f24bbb3";
 
     internal static int Run(Assembly game, Assembly plugin)
     {

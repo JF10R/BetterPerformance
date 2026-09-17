@@ -60,8 +60,8 @@ namespace BetterPerformance
         private static void VerifyNativeContracts()
         {
             // Exact inspected IL: reject changed success/registration semantics after updates.
-            VerifyHash(Create, "4299039CD6CA931E6193B156508A1543D17A0736F5A3FBB2F62B7E92A1118640", "4505712FE270ACAFC2C24D845780BBC2EAFF1E30244FE0BB15FC5919024EEE33");
-            VerifyHash(Poke, "4B71D352CB73AB5CF8DBCBD97B5744DC3EB24D1A49167AB0708D9A07841FBC6A", "43B1F144E9293ACD73635F11BB91D3E65F0B7CA06A76A01B18B58C1EC4B8EF8E");
+            VerifyHash(Create, "D457D6F1F157963372D7C7D92F7BF7092CDAB8BCAFC34007E79904D08E2B7304", "A01B821DD08827EEF537785D51C1C0D6A96D14EB3444B300393328FD4266F885");
+            VerifyHash(Poke, "F1B7DC46C31C98555C403A22460D306A5C9A090DD8730BA1D2FF43368A9FF56E", "4868D62752DD78B733064DD7972828236216195CC92FA576EA4BDAE01F24BBB3");
             if (Create.IsStatic || Create.ReturnType != typeof(bool) || Poke.IsStatic || Poke.ReturnType != typeof(bool) ||
                 Update.IsStatic || Update.ReturnType != typeof(void)) throw new InvalidOperationException("Native signature changed.");
         }

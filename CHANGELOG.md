@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.4.9
+
+- Verify every native contract against Valheim 1.0.14 (2026-09-17). That update disabled biome-data caching, so `AltBiomeWorldData.VerifyBiomeData` now clears the cache and regenerates instead of calling `TryLoadCache`; the loading-details contract follows the new path and fails if the cache branch returns. `ZoneSystem.CreateLocalZones` and `PokeLocalZone` kept their exact body sizes, 179 and 97 bytes, while their pinned raw-IL hashes changed, which is metadata-token renumbering rather than a logic change: the four initial-loading fingerprints are re-pinned for both roles.
+- Fix the game-contract harness aborting on the first failed module and silently skipping every later one. Each module now runs in its own scope, prints `FAIL <module>`, and a single exit lists all of them. The previously hidden failure this exposed was the initial-loading fingerprint above.
+- Fix a terrain-paint loss window in save coalescing. `BeforeSave` advanced the native paint-hash gate before the deferred write existed; if the flush threw, the module disabled itself but left the gate claiming the edit was written, so the next native paint-only `Save` early-returned and that neighbour's paint was lost on reload. The gate is now rolled back to its pre-batch value when a flush entry fails. Never observed firing (0 fallbacks over 104 batches and 63 deferred saves in the recorded sessions), but the option is enabled in production on both roles.
+- Add the loot-visibility probe: three postfixes time a mined chunk's disappearance to its ore being created locally, splitting the network leg from the local-creation leg on one process's clock, with an eight-bucket histogram of the perceived delay. Attribution is by position and time because the game records no link between a destroyed hit area and its drops; an absent arrival means this process created the drop itself. Client only, bounded, and free when nothing is being mined.
+
 ### 0.4.8
 
 - Add opt-in smelter catch-up budget: a transpiler bounds the per-call `Smelter.UpdateSmelter` catch-up loop (default 8 simulated seconds per call); the native accumulator already carries the remainder, so totals, fuel use and timestamps are identical while a 20 to 34 ms return-to-base spike spreads over frames. Only the smelter family iterates; the other stations are O(1) and untouched.

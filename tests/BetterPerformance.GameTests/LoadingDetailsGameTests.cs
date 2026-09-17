@@ -26,11 +26,19 @@ internal static class LoadingDetailsGameTests
             Check(method.IsStatic && method.GetParameters().Select(p => p.ParameterType).SequenceEqual(new[] { world }), "static world-only biome boundary");
         Check(verify.ReturnType == typeof(void) && points.ReturnType == typeof(void) && load.ReturnType == typeof(bool), "biome result signatures");
         Check(!sectors.IsStatic && sectors.ReturnType == typeof(void) && sectors.GetParameters().Length == 0, "instance sector boundary");
+        // The Valheim 1.0.14 update (2026-09-17) disabled biome-data caching ("Disabled biomedata
+        // caching, fixing a bug where the cache could end up in an invalid state, making
+        // it impossible to join remote servers"). VerifyBiomeData now clears the cache and
+        // regenerates unconditionally. TryLoadCache and SaveCache still exist and stay
+        // hooked, so the cache stage reports zero calls instead of vanishing.
+        var remove = Method(biome, "RemoveCache");
         var calls = References(verify).ToList();
-        Check(calls.Contains(load) && calls.Contains(points) && calls.Contains(sectors), "verification contains all measured subpaths");
-        Check(calls.IndexOf(load) < calls.IndexOf(points) && calls.IndexOf(points) < calls.IndexOf(sectors), "native cache/generation/sector order");
-        Check(calls.OfType<FieldInfo>().Any(f => f.Name == "m_worldVersion") && calls.OfType<MethodInfo>().Any(m => m.Name == "SaveCache"),
-            "cache success alone cannot prove generation omitted");
+        Check(calls.Contains(remove) && calls.Contains(points) && calls.Contains(sectors), "verification contains all measured subpaths");
+        Check(calls.IndexOf(remove) < calls.IndexOf(points) && calls.IndexOf(points) < calls.IndexOf(sectors), "native removal/generation/sector order");
+        // Two-sided: generation is unconditional today, and re-enabling the cache upstream
+        // must fail here rather than silently restoring a branch the probe cannot see.
+        Check(!calls.Contains(load) && !calls.OfType<MethodInfo>().Any(m => m.Name == "SaveCache"),
+            "no cache branch can shortcut generation");
         var game = assembly.GetType("Game", true)!;
         var scene = assembly.GetType("ZNetScene", true)!;
         var find = Method(game, "FindSpawnPoint");

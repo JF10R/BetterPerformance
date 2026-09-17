@@ -89,6 +89,58 @@ def loot_report(observations):
             'Censored/pending tracks are excluded from completed means, never treated as zero waits. Coverage is sampled; retained records may omit activity.', '']
 
 
+LOOT_VISIBILITY_BUCKETS = ('16', '32', '64', '128', '256', '512', '1024', 'over')
+
+
+def loot_visibility_report(records):
+    windows = observed_windows(records)
+    statuses = label_values(windows, 'loot_visibility_status')
+    legs = [('network', 'chunk disappears → item ZDO arrives'),
+            ('creation', 'item ZDO arrives → item object created'),
+            ('perceived', 'chunk disappears → item object created')]
+    counts = {leg: summed(windows, f'loot_visibility_{leg}_count') for leg, _ in legs}
+    if not statuses and not any(name.startswith('loot_visibility_') for gauges, _ in windows for name in gauges):
+        return []
+    output = ['### Loot visibility', '',
+              'Three timestamps on this process\'s clock only. Attribution joins a destroyed hit area to a drop by '
+              'position and time, never by identity, so a nearby unrelated drop can be attributed and a distant one '
+              'is counted as unattributed instead. Every duration is a lower bound: the first timestamp is when the '
+              'destruction was observed locally, not when the server applied it. An absent arrival means the local '
+              'process created that drop itself and is the expected control case, not a missing measurement.', '']
+    if statuses:
+        output += ['Probe status: ' + cell(', '.join(statuses)) + '.', '']
+    output += ['| Leg | Observations | Mean ms | Max ms |', '| --- | ---: | ---: | ---: |']
+    for leg, description in legs:
+        count = counts[leg]
+        total = summed(windows, f'loot_visibility_{leg}_sum')
+        peak = extent(windows, f'loot_visibility_{leg}_max')
+        mean = f'{total / count:.3f}' if count and total is not None else 'unavailable'
+        output.append(f'| {cell(description)} | {exact(count or 0)} | {mean} | '
+                      + (f'{peak[1]:.3f}' if count and peak else 'unavailable') + ' |')
+    output.append('')
+    histogram = [(name, summed(windows, 'loot_visibility_perceived_bucket_' + name)) for name in LOOT_VISIBILITY_BUCKETS]
+    histogram = [(name, value) for name, value in histogram if value is not None]
+    if histogram:
+        output += ['Perceived delay distribution (upper bound in ms, last bucket is everything above 1024): '
+                   + '; '.join(f'≤{name}={exact(value)}' if name != 'over' else f'>1024={exact(value)}'
+                               for name, value in histogram) + '.', '']
+    accounting = [('loot_visibility_unattributed', 'drops matched to no destruction'),
+                  ('loot_visibility_arrival_missing', 'matched drops created locally (no network arrival)'),
+                  ('loot_visibility_locally_owned', 'matched drops this process owns'),
+                  ('loot_visibility_destruction_overflow', 'destructions overwritten while still live'),
+                  ('loot_visibility_arrival_capacity_skips', 'arrivals dropped at capacity'),
+                  ('loot_visibility_non_monotonic', 'durations clamped to zero by a backward clock'),
+                  ('loot_visibility_unknown_prefabs', 'unclassified prefabs'),
+                  ('loot_visibility_probe_failures', 'probe failures')]
+    rows = [(label, summed(windows, name)) for name, label in accounting]
+    rows = [(label, value) for label, value in rows if value is not None]
+    if rows:
+        output += ['| Accounting | Observed total |', '| --- | ---: |']
+        output += [f'| {cell(label)} | {exact(value)} |' for label, value in rows]
+        output += ['', 'A skipped or overwritten entry is an unmeasured observation, not a fast one.', '']
+    return output
+
+
 def segment_report(segments):
     if not segments:
         return []
@@ -474,6 +526,7 @@ def summarize(paths):
         if 'LoopAcrossPhaseBoundary' in totals:
             output += ['LoopAcrossPhaseBoundary retains gaps spanning scenario markers. Exclude boundary-crossing intervals from phase-specific attribution; whole-run loop totals still include them.', '']
         output += loot_report(loot_observations)
+        output += loot_visibility_report(records)
         output += configuration_report(records)
         output += budget_report(records)
         output += bottleneck_report(records)
