@@ -104,8 +104,15 @@ namespace BetterPerformance
                 AccessTools.DeclaredField(typeof(World), "m_worldGenVersion")?.FieldType != typeof(int) ||
                 Enum.GetUnderlyingType(typeof(Heightmap.BiomeIndex)) != typeof(byte))
                 throw new InvalidOperationException("Unsupported biome data or world field contract.");
-            if (AccessTools.DeclaredMethod(typeof(WorldGenerator), "GetBiome", new[] { typeof(float), typeof(float) }) == null ||
-                AccessTools.DeclaredMethod(typeof(global::Version), "GetVersionString", new[] { typeof(bool) }) == null)
+            // GetBiome carries defaulted trailing parameters (oceanLevel, waterAlwaysOcean); match by
+            // name and leading (float, float) rather than an exact list that a default would break.
+            bool biomeLookup = false;
+            foreach (var method in typeof(WorldGenerator).GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                var parameters = method.GetParameters();
+                if (method.Name == "GetBiome" && parameters.Length >= 2 && parameters[0].ParameterType == typeof(float) && parameters[1].ParameterType == typeof(float)) biomeLookup = true;
+            }
+            if (!biomeLookup || AccessTools.DeclaredMethod(typeof(global::Version), "GetVersionString", new[] { typeof(bool) }) == null)
                 throw new InvalidOperationException("WorldGenerator.GetBiome or Version.GetVersionString is missing.");
             return (generate, load, save);
         }
@@ -258,8 +265,8 @@ namespace BetterPerformance
                 methods.Add(method);
             foreach (var constructor in typeof(WorldGenerator).GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                 methods.Add(constructor);
-            var generate = AccessTools.DeclaredMethod(typeof(AltBiomeWorldData), "GenerateBiomePoints", new[] { typeof(World) });
-            var mapToWorld = AccessTools.DeclaredMethod(typeof(AltBiomeWorldData), "MapSpaceToWorldSpace", new[] { typeof(int) });
+            var generate = GenerateMethod();
+            var mapToWorld = MapSpaceMethod();
             if (generate == null || mapToWorld == null) return null;
             methods.Add(generate); methods.Add(mapToWorld);
             methods.Sort((a, b) => string.CompareOrdinal(a.DeclaringType!.FullName + "::" + a, b.DeclaringType!.FullName + "::" + b));
@@ -281,6 +288,28 @@ namespace BetterPerformance
             material.Append("mods=").Append(mods).Append('\n');
             using (var sha = System.Security.Cryptography.SHA256.Create())
                 return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(material.ToString()))).Replace("-", "").ToLowerInvariant();
+        }
+
+        // The two point-loop methods the key covers, looked up by the shapes the installed
+        // build actually has: the map-to-world helper takes a float, not the loop's int.
+        private static MethodInfo? GenerateMethod() =>
+            AccessTools.DeclaredMethod(typeof(AltBiomeWorldData), "GenerateBiomePoints", new[] { typeof(World) });
+        private static MethodInfo? MapSpaceMethod() =>
+            AccessTools.DeclaredMethod(typeof(AltBiomeWorldData), "MapSpaceToWorldSpace", new[] { typeof(float) });
+
+        // Every lookup Install and ComputeKey depend on, for the game-contract harness: a
+        // wrong signature here would otherwise surface only as a runtime "unavailable" or a
+        // permanent key_failed, which the metadata checks cannot see.
+        internal static string? MissingContract()
+        {
+            try
+            {
+                ValidateContracts();
+                if (GenerateMethod() == null) return "AltBiomeWorldData.GenerateBiomePoints(World)";
+                if (MapSpaceMethod() == null) return "AltBiomeWorldData.MapSpaceToWorldSpace(float)";
+                return null;
+            }
+            catch (InvalidOperationException exception) { return exception.Message; }
         }
 
         private static string? Plugins()

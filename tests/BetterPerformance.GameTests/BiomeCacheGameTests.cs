@@ -147,6 +147,21 @@ internal static class BiomeCacheGameTests
             }
         }
 
+        // The module's own lookups, executed: a signature guessed wrong would otherwise show
+        // only as a runtime "unavailable" or a permanent key_failed. A Unity type that cannot
+        // load on this CLR is the one tolerated outcome, and it is named.
+        Type cache = plugin.GetType("BetterPerformance.BiomePointCache", true)!;
+        MethodInfo missing = cache.GetMethod("MissingContract", BindingFlags.Static | BindingFlags.NonPublic)!;
+        try
+        {
+            string? reason = (string?)missing.Invoke(null, null);
+            Check(reason == null, "BiomePointCache.MissingContract found every lookup it depends on: " + reason);
+        }
+        catch (TargetInvocationException exception) when (exception.InnerException is TypeLoadException || exception.InnerException is FileNotFoundException)
+        {
+            Console.WriteLine("STATIC ONLY biome cache lookups: " + exception.InnerException!.GetType().Name + " on this CLR; the metadata checks above still ran");
+        }
+
         Console.WriteLine("Biome cache: " + checks + " static game-contract checks from metadata; no generation was run.");
         return checks;
     }
