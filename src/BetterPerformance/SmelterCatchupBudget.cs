@@ -61,6 +61,15 @@ namespace BetterPerformance
             if (target == null) { Status = "type_unavailable"; TelemetryStatus = "type_unavailable"; return; }
             InstallTelemetry(target, logger);
             if (!requested.Value) { Status = "disabled"; return; }
+            // BeforeUpdate/AfterUpdate are the only resets of gateCalls and they live in the
+            // telemetry patch set. Installing the budget without them would let Threshold()
+            // return +Inf for every smelter after the first budget's worth of loop tests.
+            if (TelemetryStatus != "enabled")
+            {
+                Status = "unavailable_telemetry";
+                logger.LogWarning("Smelter catch-up budget not installed: its gate reset patches are unavailable (" + TelemetryStatus + ").");
+                return;
+            }
             try
             {
                 Validate(PatchProcessor.GetOriginalInstructions(target), target);

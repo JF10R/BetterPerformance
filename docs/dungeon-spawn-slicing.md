@@ -25,6 +25,8 @@ consumes the last room it performs exactly the native tail: `SnapToGround.SnappA
 The prefix runs the native loop whole, and counts it, in four cases: the module is off, the
 process is a server or has no `ZNet` instance, the local player is inside the dungeon
 bounds, or the generator has no loaded rooms. Any exception in the prefix also falls back.
+A fifth exit is not a fallback: a generator whose slice is already queued returns false so
+the native loop does not place rooms a slice already owns.
 
 `Spawn` hardcodes `SpawnMode.Client` and is called only from `OnRoomLoaded`. The layout
 path, `Generate(int, SpawnMode)` with `Save`, never calls it, so `SpawnMode.Full` and
@@ -51,8 +53,14 @@ wait the same way.
 and no ZDO, so a player standing inside while rooms are missing can fall through. When the
 local player is inside the dungeon bounds on entry to `Spawn`, the native loop runs whole.
 `Generate` assigns `m_zoneCenter` and never runs on a client, so the bounds are rebuilt from
-the generator's transform with the same zone formula `Generate` uses, and sized with
-`m_zoneSize`.
+the generator's transform with the zone formula `Generate` uses — minus one input the client
+never has: `m_originalPosition` is assigned only on the peer that spawned the location
+(`ZoneSystem.SpawnLocation`, Full/Ghost modes) and is not in the ZDO, so on a client the exact
+y-centre is unknown. The check therefore centres y on the generator itself, doubles the
+vertical extent, and also treats any player within `m_zoneSize.magnitude` of the generator as
+inside. Every uncertainty widens "inside"; its only consequence is the native spawn. Until
+0.4.10 the check used the zero field as if it were the real offset, which could report a
+player standing inside as outside.
 
 **A generator destroyed mid-slice.** A prefix on `OnDestroy` drops the entry and counts it
 before the native `OnDestroy` reaches `ReleaseHeldReferences`, so that release is never

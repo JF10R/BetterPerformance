@@ -82,7 +82,9 @@ namespace BetterPerformance
         // playSound exactly as the caller passed it.
         private static void Prefix(InventoryGui __instance, int __0, ref bool __1)
         {
-            if (!__1 || !Enabled || __instance == null) return;
+            // Native plays nothing without a local player, so a suppression there would
+            // count a sound that was never going to play.
+            if (!__1 || !Enabled || __instance == null || !Player.m_localPlayer) return;
             try
             {
                 if (Redundant(__instance, __0)) { __1 = false; Interlocked.Increment(ref suppressed); }

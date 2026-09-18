@@ -59,6 +59,15 @@ internal static class TerrainGameTests
         MethodInfo doOperation = terrain.GetMethods(Declared)
             .Single(method => method.Name == "DoOperation" && method.GetParameters().Length == 3);
 
+        // Valheim 1.0.15 removed the per-texel neighbour Save from spread: it now marks
+        // m_modifiedPaint, writes the mask in memory and pokes, and a later Save serializes
+        // the flags. That was the entire cost TerrainSaveCoalescing existed to remove, so on
+        // 1.0.15 the module is superseded and must decline to install. Both shapes are
+        // asserted strictly — this is not a widened contract: an installation on either build
+        // gets exactly one expected outcome, and a client and a dedicated server can sit on
+        // different builds while one of them is still updating.
+        bool nativeSavesPerTexel = false;
+
         // Metadata-only IL. Reflection cannot open PaintCleared's body in this process.
         var resolver = new DefaultAssemblyResolver();
         resolver.AddSearchDirectory(Path.GetDirectoryName(game.Location)!);
@@ -72,23 +81,35 @@ internal static class TerrainGameTests
                 method.Name.StartsWith(SpreadPrefix, StringComparison.Ordinal));
             int spreadCalls = Calls(paintDefinition, spreadDefinition.Name);
             Check(spreadCalls >= 1, "PaintCleared reaches the neighbour through the spread local function");
-            Console.WriteLine("Terrain coalescing: PaintCleared reaches spread from " + spreadCalls +
-                " edge and corner cases; each one saves the neighbour in vanilla");
-            Check(Calls(paintDefinition, "Save") == 0,
-                "PaintCleared itself never saves, so a batch scope only defers neighbour saves");
-            Check(Calls(spreadDefinition, "Save") == 1,
-                "spread saves the neighbour exactly once per painted edge vertex");
+            Check(Calls(paintDefinition, "Save") == 0, "PaintCleared itself never saves");
+            int neighbourSaves = Calls(spreadDefinition, "Save");
+            Check(neighbourSaves == 0 || neighbourSaves == 1,
+                "spread saves the neighbour either once (up to 1.0.14) or never (1.0.15 and later)");
+            nativeSavesPerTexel = neighbourSaves == 1;
             var instructions = spreadDefinition.Body.Instructions.ToList();
-            int call = instructions.FindIndex(instruction =>
-                instruction.Operand is MethodReference called && called.Name == "Save");
-            Check(call >= 2 && instructions[call - 2].OpCode == OpCodes.Ldloc_0,
-                "the saved receiver is the neighbouring compiler, not the operation's own compiler");
-            Check(call + 5 < instructions.Count && instructions[call + 1].OpCode == OpCodes.Ldloc_0 &&
-                instructions[call + 2].OpCode == OpCodes.Ldfld &&
-                ((FieldReference)instructions[call + 2].Operand).Name == "m_hmap" &&
-                instructions[call + 3].OpCode == OpCodes.Ldc_I4_1 &&
-                instructions[call + 5].Operand is MethodReference poke && poke.Name == "Poke",
-                "spread pokes the neighbour heightmap with a one-frame delay immediately after saving");
+            Check(instructions.Any(instruction => instruction.Operand is MethodReference poke && poke.Name == "Poke"),
+                "spread still pokes the neighbour heightmap");
+            if (nativeSavesPerTexel)
+            {
+                int call = instructions.FindIndex(instruction =>
+                    instruction.Operand is MethodReference called && called.Name == "Save");
+                Check(call >= 2 && instructions[call - 2].OpCode == OpCodes.Ldloc_0,
+                    "the saved receiver is the neighbouring compiler, not the operation's own compiler");
+                Check(call + 5 < instructions.Count && instructions[call + 1].OpCode == OpCodes.Ldloc_0 &&
+                    instructions[call + 2].OpCode == OpCodes.Ldfld &&
+                    ((FieldReference)instructions[call + 2].Operand).Name == "m_hmap" &&
+                    instructions[call + 3].OpCode == OpCodes.Ldc_I4_1,
+                    "spread pokes the neighbour heightmap with a one-frame delay immediately after saving");
+            }
+            else
+            {
+                Check(instructions.Any(instruction => instruction.Operand is FieldReference modified &&
+                        modified.Name == "m_modifiedPaint"),
+                    "spread marks the neighbour's modified-paint flag instead of writing the ZDO");
+            }
+            Console.WriteLine("Terrain coalescing: PaintCleared reaches spread from " + spreadCalls +
+                " edge and corner cases; per-texel neighbour save present=" + nativeSavesPerTexel);
+
 
             TypeDefinition heightmap = module.GetType("Heightmap")!;
             MethodDefinition pokeDefinition = heightmap.Methods.Single(method => method.Name == "Poke");
@@ -126,10 +147,20 @@ internal static class TerrainGameTests
             full = (bool)arguments[3]!;
             return reason;
         }
-        Check(Verify(save, spread, paintCleared, out bool paintVerified) == null,
-            "the installed game matches the coalescing contract");
-        Console.WriteLine("Terrain coalescing: PaintCleared body readable by reflection=" + paintVerified +
-            "; full contract is re-checked inside Unity where it always is");
+        string? contractReason = Verify(save, spread, paintCleared, out bool paintVerified);
+        if (nativeSavesPerTexel)
+        {
+            Check(contractReason == null, "the installed game matches the coalescing contract");
+            Console.WriteLine("Terrain coalescing: contract holds; PaintCleared body readable by reflection=" +
+                paintVerified + "; full contract is re-checked inside Unity where it always is");
+        }
+        else
+        {
+            Check(contractReason != null && contractReason.Contains("spread"),
+                "a game without the per-texel neighbour save must be refused, not patched");
+            Console.WriteLine("Terrain coalescing: superseded by the game — " + contractReason +
+                " The module declines to install and vanilla behaviour is retained.");
+        }
         Check(Verify(save, doOperation, paintCleared, out _) != null,
             "a spread local function that does not save the neighbour is rejected");
         Check(Verify(Method(terrain, "Load", Type.EmptyTypes), spread, paintCleared, out _) != null,

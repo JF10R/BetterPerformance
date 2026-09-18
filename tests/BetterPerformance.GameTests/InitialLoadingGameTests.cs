@@ -6,10 +6,11 @@ using HarmonyLib;
 internal static class InitialLoadingGameTests
 {
     private const BindingFlags PrivateStatic = BindingFlags.NonPublic | BindingFlags.Static;
-    private const string ClientCreateHash = "d457d6f1f157963372d7c7d92f7bf7092cdab8bcafc34007e79904d08e2b7304";
-    private const string ServerCreateHash = "a01b821dd08827eef537785d51c1c0d6a96d14eb3444b300393328fd4266f885";
-    private const string ClientPokeHash = "f1b7dc46c31c98555c403a22460d306a5c9a090dd8730ba1d2ff43368a9ff56e";
-    private const string ServerPokeHash = "4868d62752dd78b733064dd7972828236216195cc92fa576ea4bdae01f24bbb3";
+    // One token-independent fingerprint per method covers the client and the dedicated
+    // server, and held unchanged across 1.0.14 and 1.0.15, where the four raw-byte hashes
+    // it replaced all broke: those breaks were metadata renumbering, not logic.
+    private const string CreateFingerprint = "45478348879b6ff6a15db9a876bcad3258b1e179e4e7e23fb1cf97159a8108e4";
+    private const string PokeFingerprint = "4b32e779ab36bbe841cd576fd3a0498023a8b4e327ac31a134b8d5fcbe9cd966";
 
     internal static int Run(Assembly game, Assembly plugin)
     {
@@ -34,9 +35,10 @@ internal static class InitialLoadingGameTests
             var member = AccessTools.DeclaredField(gameType, field);
             Check(member != null && !member.IsStatic && member.FieldType == typeof(bool), "native initial-respawn predicate " + field);
         }
+        pluginAssembly = plugin;
         string createHash = Hash(native!), pokeHash = Hash(poke!);
-        Check((createHash == ClientCreateHash && pokeHash == ClientPokeHash) ||
-            (createHash == ServerCreateHash && pokeHash == ServerPokeHash), "native hashes are one verified client/server contract pair");
+        Check(createHash == CreateFingerprint && pokeHash == PokeFingerprint,
+            "native fingerprints match the verified contract on this installation");
         Check(native!.GetMethodBody()!.GetILAsByteArray()!.Length == 179 && poke!.GetMethodBody()!.GetILAsByteArray()!.Length == 97,
             "verified native body sizes");
         var module = plugin.GetType("BetterPerformance.InitialLoadingOptimization", true)!;
@@ -56,7 +58,7 @@ internal static class InitialLoadingGameTests
         }
         RejectHash(native, new[] { new string('0', 64) }, "wrong expected native hash rejected");
         RejectHash(typeof(InitialLoadingGameTests).GetMethod(nameof(ChangedContractFixture), PrivateStatic)!,
-            new[] { ClientCreateHash.ToUpperInvariant(), ServerCreateHash.ToUpperInvariant() }, "changed synthetic body rejected without modifying game assemblies");
+            new[] { CreateFingerprint.ToUpperInvariant() }, "changed synthetic body rejected without modifying game assemblies");
         var transpile = module.GetMethod("Transpile", PrivateStatic)!;
         var wrapper = module.GetMethod("CreateLocalZoneBurst", PrivateStatic)!;
         Check(wrapper != null && wrapper.IsStatic && wrapper.ReturnType == typeof(bool) &&
@@ -92,13 +94,17 @@ internal static class InitialLoadingGameTests
         var doubled = original.Select(i => new CodeInstruction(i)).ToList();
         doubled.Add(new CodeInstruction(OpCodes.Call, native));
         Reject(doubled, "multiple native callsites rejected");
-        Console.WriteLine("Initial loading: " + checks + " raw-IL/native-contract/transpiler checks; no Unity zone creation invoked.");
+        Console.WriteLine("Initial loading: " + checks + " fingerprint/native-contract/transpiler checks; no Unity zone creation invoked.");
         return checks;
     }
+    // The plugin's own token-independent fingerprint, so the pin and the runtime guard
+    // cannot drift apart; the raw-byte SHA-256 it replaced broke on two consecutive game
+    // updates that left these bodies logically identical.
+    private static Assembly? pluginAssembly;
     private static string Hash(MethodInfo method)
     {
-        using var algorithm = SHA256.Create();
-        return BitConverter.ToString(algorithm.ComputeHash(method.GetMethodBody()!.GetILAsByteArray()!)).Replace("-", "").ToLowerInvariant();
+        Type fingerprint = pluginAssembly!.GetType("BetterPerformance.IlFingerprint", true)!;
+        return ((string)fingerprint.GetMethod("Compute", PrivateStatic)!.Invoke(null, new object[] { method })!).ToLowerInvariant();
     }
     private static bool ChangedContractFixture() => false;
 }

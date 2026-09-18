@@ -1,5 +1,13 @@
 # Terrain neighbour save coalescing
 
+> **Superseded by the game in Valheim 1.0.15 (2026-09-18).** `spread` no longer calls
+> `neighbour.Save(paintOnly)`: it marks `m_modifiedPaint`, writes the mask in memory and
+> pokes, and a later `Save` serializes the flags. The per-texel write this module removed
+> is gone natively, so on 1.0.15 and later `Verify` rejects the shape, the module declines
+> to install and vanilla behaviour is retained. The code is kept because it still applies
+> to an installation on 1.0.14 or earlier; the switch is set off on both roles here.
+> Everything below describes the pre-1.0.15 native shape.
+
 Opt-in, default off: `[Terrain] CoalesceNeighbourSavesEnabled`. Requires a restart.
 Attribution telemetry (below) is separate and on by default.
 

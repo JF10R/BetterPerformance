@@ -59,7 +59,7 @@ prefix is a void method with exactly one by-reference bool.
 ### Mechanism
 
 `MineRock5.DamageArea` computes one position and uses it for the drops, the hit effect, the
-destroy effect and the damage text:
+destroy effect, the damage text and the origin of the 10 m `AddNoise` player search:
 
 ```
 vector = (m_hitEffectAreaCenter && hitArea.m_collider != null)
@@ -86,7 +86,11 @@ native code supports rather than computing a new one.
   remembered per instance and restored on a runtime toggle or on uninstall.
 - The structural-collapse path is unchanged: `CheckSupport` builds its own `HitData` whose
   `m_point` is already the chunk centre, so its drops land where they did before.
-- Tracking is bounded at 4096 live instances, with destroyed instances pruned.
+- Tracking is bounded at 4096 live instances, with destroyed instances pruned. An instance
+  past the cap keeps vanilla placement and is counted in `mining_hitpoint_instances_capped`.
+- `mining_hitpoint_instances_applied` counts field overrides on this process, not mining
+  events: `DamageArea` runs on the rock's owner, so a rock another client owns is unaffected
+  by this process's override however healthy the counter reads.
 
 ### Configuration
 

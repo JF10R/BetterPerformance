@@ -13,7 +13,11 @@ stores it. The prefix may skip native generation and restore those raw bytes wit
 `LoadRawTextureData` + `Apply`. Raw storage bytes are cached, not the pre-quantisation
 arrays, so the round trip is exact for the shipped formats (RGB24, a 4-bit mask format,
 RHalf). Entries live in `BepInEx/BetterPerformance/minimap-cache/<key>.bin` (gzip, SHA-256
-over the payload). The native `cacheMinimap*` files are never read, written or deleted.
+over the payload). The native `cacheMinimap*` files are never read, written or deleted by
+the plugin — and because a verified hit skips native generation, the native
+`DeleteMapTextureData`/`SaveMapTextureDataToDisk` pair inside `GenerateWorldMap` does not
+run either, so those files are neither refreshed nor cleaned while hits are served.
+Removing the plugin therefore costs one native regeneration on the next join.
 
 ## Key
 

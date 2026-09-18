@@ -9,8 +9,8 @@ using HarmonyLib;
 
 namespace BetterPerformance
 {
-    // MineRock5.DamageArea places the drops, the hit effect, the destroy effect and the
-    // damage text at hitArea.m_collider.bounds.center when the prefab field
+    // MineRock5.DamageArea places the drops, the hit effect, the destroy effect, the damage
+    // text and the 10 m AddNoise origin at hitArea.m_collider.bounds.center when the prefab field
     // m_hitEffectAreaCenter is true, and at hit.m_point when it is false. A buried chunk
     // therefore drops ore underground until ItemDrop.SlowUpdate lifts it. This module
     // clears that field on the listed prefabs, selecting the hit point the native code
@@ -23,7 +23,7 @@ namespace BetterPerformance
         private static readonly HashSet<string> Prefabs = new HashSet<string>(StringComparer.Ordinal);
         private static ConfigEntry<bool>? option;
         private static ConfigEntry<string>? prefabList;
-        private static long applied, restored, seen, failures;
+        private static long applied, restored, seen, capped, failures;
 
         internal static bool Installed { get; private set; }
         internal static bool Enabled { get; private set; }
@@ -40,6 +40,7 @@ namespace BetterPerformance
             try
             {
                 MethodInfo lifecycle = ValidateContracts();
+                Prefabs.Clear();
                 foreach (string name in prefabList.Value.Split(','))
                 {
                     string trimmed = name.Trim();
@@ -90,7 +91,9 @@ namespace BetterPerformance
                 if (!Prefabs.Contains(Utils.GetPrefabName(__instance.gameObject.name))) return;
                 if (Tracked.ContainsKey(__instance)) return;
                 if (Tracked.Count >= TrackedLimit) Prune();
-                if (Tracked.Count >= TrackedLimit) return;
+                // Past the cap the rock keeps vanilla placement; count it so a healthy
+                // "applied" figure cannot hide instances the override never reached.
+                if (Tracked.Count >= TrackedLimit) { Interlocked.Increment(ref capped); return; }
                 Tracked.Add(__instance, __instance.m_hitEffectAreaCenter);
                 if (Enabled) Override(__instance, false);
             }
@@ -147,6 +150,7 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("mining_hitpoint_instances_applied", Interlocked.Exchange(ref applied, 0), "instances"));
             gauges.Add(new NumberValue("mining_hitpoint_instances_restored", Interlocked.Exchange(ref restored, 0), "instances"));
             gauges.Add(new NumberValue("mining_hitpoint_instances_seen", Interlocked.Exchange(ref seen, 0), "instances"));
+            gauges.Add(new NumberValue("mining_hitpoint_instances_capped", Interlocked.Exchange(ref capped, 0), "instances"));
             gauges.Add(new NumberValue("mining_hitpoint_probe_failures", Interlocked.Exchange(ref failures, 0), "calls"));
             labels.Add(new TextValue("mining_hitpoint_status", Status));
             labels.Add(new TextValue("mining_hitpoint_enabled", Enabled ? "true" : "false"));
@@ -158,6 +162,7 @@ namespace BetterPerformance
             Interlocked.Exchange(ref applied, 0);
             Interlocked.Exchange(ref restored, 0);
             Interlocked.Exchange(ref seen, 0);
+            Interlocked.Exchange(ref capped, 0);
             Interlocked.Exchange(ref failures, 0);
         }
 

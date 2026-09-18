@@ -37,7 +37,7 @@ foreach ($target in $targets) {
  $lines = Get-Content -LiteralPath $log
  $unavailable = $lines | Where-Object { $_ -match 'unavailable|unsupported_layout|type_unavailable|patch_failed|rejected' -and $_ -notmatch 'STATIC ONLY|offline|standalone' }
  if ($unavailable) { Write-Host "  Contract warnings (verify each against docs/game-update-guide.md):"; $unavailable | ForEach-Object { Write-Host ('   ' + $_) } }
- $lines | Where-Object { $_ -match 'checks|^PASS|^FAIL' } | ForEach-Object { Write-Host ('   ' + $_) }
+ $lines | Where-Object { $_ -match 'checks|^PASS|^FAIL|^Installed game version' } | ForEach-Object { Write-Host ('   ' + $_) }
 }
 Write-Host ''
 if ($failures.Count) { Write-Host ('FAILED: ' + ($failures -join '; ')); exit 1 }

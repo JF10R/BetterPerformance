@@ -135,19 +135,25 @@ namespace BetterPerformance
         }
 
         // Generate() assigns m_zoneCenter and never runs on a client, so the bounds are
-        // rebuilt here with the same zone formula the native code uses.
+        // rebuilt here from the zone formula the native code uses — with one input missing:
+        // m_originalPosition is assigned only on the peer that spawned the location
+        // (ZoneSystem.SpawnLocation) and is not in the ZDO, so on a client it reads zero and
+        // the exact y-centre Generate used is unknown. Every uncertainty therefore widens
+        // the "inside" answer, whose only consequence is the native single-frame spawn.
         private static bool PlayerInsideBounds(DungeonGenerator generator)
         {
             Player player = Player.m_localPlayer;
             if (player == null) return false;
             Vector3 origin = generator.transform.position;
+            Vector3 position = player.transform.position;
+            Vector3 size = generator.m_zoneSize;
             Vector3 center = origin;
-            if (ZoneSystem.instance != null)
-            {
-                center = ZoneSystem.GetZonePos(ZoneSystem.GetZone(origin));
-                center.y = origin.y - generator.m_originalPosition.y;
-            }
-            return new Bounds(center, generator.m_zoneSize).Contains(player.transform.position);
+            if (ZoneSystem.instance != null) center = ZoneSystem.GetZonePos(ZoneSystem.GetZone(origin));
+            center.y = origin.y;
+            size.y *= 2f;
+            if (new Bounds(center, size).Contains(position)) return true;
+            // Independent of any centre: near the generator at all means native.
+            return Vector3.Distance(position, origin) <= size.magnitude;
         }
 
         // OnRoomLoaded calls this immediately after Spawn returns. Releasing the room prefab
@@ -188,11 +194,15 @@ namespace BetterPerformance
                 clock.Restart();
                 int placed = 0;
                 float allowance = budgetMs?.Value ?? 4f;
+                // The slice being worked on, held outside the loop: Finish drops its entry
+                // before the native release, so after a throw Queue[0] is already the NEXT
+                // dungeon and abandoning that would release it early with rooms unplaced.
+                Slice? current = null;
                 try
                 {
                     while (Queue.Count > 0 && (placed == 0 || clock.Elapsed.TotalMilliseconds < allowance))
                     {
-                        Slice slice = Queue[0];
+                        Slice slice = current = Queue[0];
                         if (slice.Generator == null) { Drop(slice); Interlocked.Increment(ref aborted); continue; }
                         if (slice.Index >= slice.Rooms.Length) { Finish(slice); continue; }
                         Place(slice);
@@ -202,7 +212,7 @@ namespace BetterPerformance
                 catch (Exception)
                 {
                     Interlocked.Increment(ref failures);
-                    if (Queue.Count > 0) Abandon(Queue[0]);
+                    if (current != null) Abandon(current);
                 }
                 if (placed > 0)
                 {
@@ -247,7 +257,10 @@ namespace BetterPerformance
         private static void Drop(Slice slice)
         {
             Queue.Remove(slice);
-            if (slice.Generator != null) Pending.Remove(slice.Generator);
+            // Reference equality on purpose: a destroyed generator compares equal to null
+            // through Unity's operator while still being the dictionary key, and leaving it
+            // would pin the destroyed object and its room array for the rest of the session.
+            if (!ReferenceEquals(slice.Generator, null)) Pending.Remove(slice.Generator);
         }
 
         // Main-thread runtime toggle. In-flight slices always finish; only new dungeons

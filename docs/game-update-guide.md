@@ -26,7 +26,8 @@ Read the output in this order:
 
 For each affected module, in this order:
 
-- Decompile the new method with ILSpy (`ilspycmd -p -o <scratch outside the repo> assembly_valheim.dll`; never commit decompiled sources) and compare with the previous shape described in the module's doc (`docs/*.md` for each module lists the invariants and the IL it relies on).
+- **Before** decompiling the new build, archive the old one: copy the previous `assembly_valheim.dll` and its decompiled tree into a per-version directory outside the repo (`<decompile root>/archive/<old version>/`). On 2026-09-17 the 1.0.14 decompilation was overwritten in place and no 1.0.12 IL was left to diff against, so a contract break had to be argued from body size instead of compared; the same thing nearly happened again the next morning with 1.0.15. An archived old build turns "argued" into "diffed".
+- Decompile the new method with ILSpy (`ilspycmd -p -o <scratch outside the repo> assembly_valheim.dll`; never commit decompiled sources) and compare with the archived previous build first, then with the shape described in the module's doc (`docs/*.md` for each module lists the invariants and the IL it relies on).
 - If the change is cosmetic (a renamed local, an added unrelated call), extend the contract check to accept both shapes and keep the same equivalence argument.
 - If the change is semantic (different loop bounds, a new field written, a different serialization order), do not widen the check. Disable the module by default for that game version, update its doc, and re-derive the optimization from the new code before re-enabling.
 - Timing probes (`TimingHooks.cs`): adjust the parameter type list; a probe reports `unavailable` rather than failing, so check the harness `probe.*` list rather than assuming.
@@ -65,10 +66,12 @@ Then read the captures with `scripts/summarize_capture.py` and confirm: `probe_f
 | Loading details | Which subpaths `AltBiomeWorldData.VerifyBiomeData` calls | `LoadingDetailsTelemetry.cs` |
 | Loot visibility | `MineRock5.RPC_SetAreaHealth`, the private `ZDOMan.CreateNewZDO(ZDOID, Vector3, int)` and its zero-hash arrival call site | `LootVisibilityTelemetry.cs` |
 
-A pinned raw-IL hash is the most update-fragile contract in the repo: the bytes include
-metadata tokens, which renumber whenever anything else in the assembly changes. An unchanged
-body size beside a changed hash points at token churn rather than a logic change — evidence
-worth stating, never proof on its own. Confirm against the decompiled body and the module's
-documented invariants before re-pinning.
+A pinned raw-IL hash is the most update-fragile contract there is: the bytes include
+metadata tokens, which renumber whenever anything else in the assembly changes. Pin
+`IlFingerprint.Compute` instead — opcodes and operands with each token replaced by the
+resolved member's full name. It held across 1.0.14 and 1.0.15 where four raw hashes broke,
+and it still changes on any opcode, constant, branch target or referenced member. When a
+fingerprint does break, diff the archived previous build before deciding cosmetic or
+semantic; an unchanged body size beside a changed fingerprint is a lead, not proof.
 
 A green harness proves the contracts still hold on the installed build. It does not prove performance; that needs the isolated session and then a real session with the same A/B discipline as before.

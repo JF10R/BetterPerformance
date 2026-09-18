@@ -60,18 +60,19 @@ namespace BetterPerformance
         private static void VerifyNativeContracts()
         {
             // Exact inspected IL: reject changed success/registration semantics after updates.
-            VerifyHash(Create, "D457D6F1F157963372D7C7D92F7BF7092CDAB8BCAFC34007E79904D08E2B7304", "A01B821DD08827EEF537785D51C1C0D6A96D14EB3444B300393328FD4266F885");
-            VerifyHash(Poke, "F1B7DC46C31C98555C403A22460D306A5C9A090DD8730BA1D2FF43368A9FF56E", "4868D62752DD78B733064DD7972828236216195CC92FA576EA4BDAE01F24BBB3");
+            VerifyHash(Create, "45478348879B6FF6A15DB9A876BCAD3258B1E179E4E7E23FB1CF97159A8108E4");
+            VerifyHash(Poke, "4B32E779AB36BBE841CD576FD3A0498023A8B4E327AC31A134B8D5FCBE9CD966");
             if (Create.IsStatic || Create.ReturnType != typeof(bool) || Poke.IsStatic || Poke.ReturnType != typeof(bool) ||
                 Update.IsStatic || Update.ReturnType != typeof(void)) throw new InvalidOperationException("Native signature changed.");
         }
 
+        // Token-independent IL fingerprint (see IlFingerprint): a game update that only
+        // renumbers metadata no longer disables the acceleration, while any change to the
+        // opcodes, constants, branches or referenced members still does.
         private static void VerifyHash(MethodInfo method, params string[] expected)
         {
-            var bytes = method?.GetMethodBody()?.GetILAsByteArray();
-            using (var sha = SHA256.Create())
-                if (bytes == null || !expected.Contains(BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "")))
-                    throw new InvalidOperationException("Native zone contract changed.");
+            if (method == null || !expected.Contains(IlFingerprint.Compute(method)))
+                throw new InvalidOperationException("Native zone contract changed.");
         }
 
         private static IEnumerable<CodeInstruction> Transpile(IEnumerable<CodeInstruction> instructions)

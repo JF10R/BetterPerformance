@@ -23,7 +23,10 @@ namespace BetterPerformance
     // Minimap.GenerateWorldMap. An entry is only ever applied after a previous join
     // produced byte-identical raw texture data under the same key, so a cache hit can
     // only reproduce output the installed game already generated on this machine.
-    // Never reads or writes the native cacheMinimap* files.
+    // Never reads or writes the native cacheMinimap* files — and on a verified hit it
+    // also skips the native DeleteMapTextureData/SaveMapTextureDataToDisk pair inside
+    // GenerateWorldMap, so those files are neither refreshed nor cleaned while a hit
+    // is served; removing the plugin costs one native regeneration.
     internal static class MinimapTextureCache
     {
         private const int ClosureLimit = 4096;
@@ -321,7 +324,11 @@ namespace BetterPerformance
             material.Append("height=").Append(Layout(heights)).Append('\n');
             material.Append("methods=").Append(closure.Count.ToString(CultureInfo.InvariantCulture)).Append('\n');
             material.Append("il=").Append(ClosureHash(closure)).Append('\n');
-            material.Append("mods=").Append(Plugins()).Append('\n');
+            // An unreadable plugin list must yield no key at all: a fixed placeholder would
+            // let two different mod loadouts share one entry.
+            string? mods = Plugins();
+            if (mods == null) { Status = "plugins_unreadable"; return null; }
+            material.Append("mods=").Append(mods).Append('\n');
             return Hash(Encoding.UTF8.GetBytes(material.ToString()));
         }
 
@@ -357,7 +364,7 @@ namespace BetterPerformance
             }
         }
 
-        private static string Plugins()
+        private static string? Plugins()
         {
             var names = new List<string>();
             try
@@ -365,7 +372,7 @@ namespace BetterPerformance
                 foreach (var info in Chainloader.PluginInfos)
                     names.Add(info.Key + "@" + (info.Value?.Metadata?.Version?.ToString() ?? "?"));
             }
-            catch (Exception) { return "unavailable"; }
+            catch (Exception) { return null; }
             names.Sort(StringComparer.Ordinal);
             return Hash(Encoding.UTF8.GetBytes(string.Join("\n", names.ToArray())));
         }
@@ -430,8 +437,11 @@ namespace BetterPerformance
                 return false;
             }
             if (!entry.Verified || entry.Mismatches != 0 ||
+                // Live byte counts, so a payload that no longer fits the texture is a miss
+                // rather than an exception in LoadRawTextureData. (0.4.7 passed the entry's
+                // own lengths here, which made the three comparisons tautologies.)
                 !entry.SameLayout(map.width, map.height, Layout(map), Layout(mask), Layout(heights),
-                    entry.Map.Length, entry.Mask.Length, entry.Heights.Length))
+                    map.GetRawTextureData<byte>().Length, mask.GetRawTextureData<byte>().Length, heights.GetRawTextureData<byte>().Length))
             {
                 loadMs += Since(started);
                 Result = entry.Verified ? "miss" : "miss_unverified";

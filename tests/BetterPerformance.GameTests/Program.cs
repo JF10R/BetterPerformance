@@ -19,6 +19,14 @@ AppDomain.CurrentDomain.AssemblyResolve += (_, requested) => {
 };
 Assembly game = Assembly.LoadFrom(Path.Combine(managedDirectory, "assembly_valheim.dll"));
 Assembly plugin = Assembly.LoadFrom(Path.GetFullPath(args[1]));
+// Name the build every contract below was checked against; a client and a dedicated
+// server can sit on different builds while one of them is still updating.
+try
+{
+    object? gameVersion = game.GetType("Version", true)!.GetProperty("CurrentVersion", BindingFlags.Public | BindingFlags.Static)!.GetValue(null);
+    Console.WriteLine("Installed game version: " + gameVersion + " (" + gameDirectory + ")");
+}
+catch (Exception exception) { Console.WriteLine("Installed game version: unavailable offline (" + exception.GetType().Name + ")"); }
 Type scene = game.GetType("ZNetScene", true)!;
 Type patchType = plugin.GetType("BetterPerformance.ObjectCreationBudget", true)!;
 MethodInfo transpile = patchType.GetMethod("Transpile", BindingFlags.Static | BindingFlags.NonPublic)!;

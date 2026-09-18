@@ -149,7 +149,11 @@ namespace BetterPerformance
                 var minimap = Minimap.instance;
                 // A dedicated server has a Minimap but never saves a character profile.
                 if (minimap == null || ZNet.instance == null || ZNet.instance.IsDedicated()) return;
-                var decision = policy.Evaluate(now, ChangeCounter(minimap));
+                // The policy's in-flight flags are written by the worker under Gate; reading
+                // and advancing them under the same lock keeps a stale read from turning
+                // Dispatch's guard into a thrown exception that would disable the module.
+                PrecompressionDecision decision;
+                lock (Gate) { decision = policy.Evaluate(now, ChangeCounter(minimap)); }
                 if (decision == PrecompressionDecision.Dirty) { skippedDirty++; return; }
                 if (decision == PrecompressionDecision.InFlight) { skippedInFlight++; return; }
                 if (decision != PrecompressionDecision.Run) return;
@@ -157,7 +161,7 @@ namespace BetterPerformance
                 var snapshot = Capture(minimap);
                 snapshotMsMax = Math.Max(snapshotMsMax, (Stopwatch.GetTimestamp() - snapshotStarted) * 1000.0 / Stopwatch.Frequency);
                 if (snapshot == null) return;
-                policy.Dispatch(now, snapshot.Change);
+                lock (Gate) { policy.Dispatch(now, snapshot.Change); }
                 runs++;
                 var worker = new Thread(Encode) { IsBackground = true, Name = "BetterPerformance.MapPrecompression", Priority = System.Threading.ThreadPriority.BelowNormal };
                 worker.Start(snapshot);
@@ -306,8 +310,9 @@ namespace BetterPerformance
                 pendingInput = pendingEncoded = null; pendingWorld = null;
             }
             bool adopted = MapCompressionCache.Adopt(input, encoded, world);
-            if (adopted) published++; else failures++;
-            policy?.Adopted();
+            // The worker increments failures too, so this counter must be atomic on both sides.
+            if (adopted) Interlocked.Increment(ref published); else Interlocked.Increment(ref failures);
+            lock (Gate) { policy?.Adopted(); }
             return true;
         }
 
