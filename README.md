@@ -34,7 +34,7 @@ The initial focus is measuring a client and dedicated server running on the same
 - Native Steam transport counters, valid resident-memory readings, scenario markers and GC/boundary-crossing loop identification.
 - Optional continuous capture with linked segments and a directory allowance; no QA harness required.
 - Bounded passive loot-queue observations and structured slow-operation summaries with sampled context.
-- Bounded loot-visibility observations: from a mined chunk disappearing to its ore being created locally, split into a network and a local-creation leg. Client only; attribution is positional, not by identity.
+- Bounded loot-visibility observations: from a mined chunk, felled tree, log or destructible disappearing to its loot being created locally, split into a network and a local-creation leg. Client only; attribution is positional, not by identity.
 - Reduced recorder self-measurement, smaller loot scans, collection backoff after costly polls and below-normal export priority.
 - Bounded local graphics configuration history, with distinct player preferences, active settings and synchronized simulation distances.
 - Object-budget tradeoffs, aggregate AI/pathfinding/spawn observations and Windows main-thread CPU accounting.

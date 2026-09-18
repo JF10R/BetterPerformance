@@ -131,6 +131,10 @@ def loot_visibility_report(records):
                   ('loot_visibility_arrival_capacity_skips', 'arrivals dropped at capacity'),
                   ('loot_visibility_non_monotonic', 'durations clamped to zero by a backward clock'),
                   ('loot_visibility_unknown_prefabs', 'unclassified prefabs'),
+                  ('loot_visibility_destroyed_rock', 'rocks destroyed (t0 events)'),
+                  ('loot_visibility_destroyed_tree', 'trees felled (t0 events)'),
+                  ('loot_visibility_destroyed_log', 'logs destroyed (t0 events)'),
+                  ('loot_visibility_destroyed_destructible', 'destructibles with drops destroyed (t0 events)'),
                   ('loot_visibility_probe_failures', 'probe failures')]
     rows = [(label, summed(windows, name)) for name, label in accounting]
     rows = [(label, value) for label, value in rows if value is not None]
@@ -138,6 +142,10 @@ def loot_visibility_report(records):
         output += ['| Accounting | Observed total |', '| --- | ---: |']
         output += [f'| {cell(label)} | {exact(value)} |' for label, value in rows]
         output += ['', 'A skipped or overwritten entry is an unmeasured observation, not a fast one.', '']
+    population = extent(windows, 'item_drop_instances')
+    if population:
+        output += [f'Dropped-item population: peak {exact(population[1])} live ItemDrop instances in one interval; '
+                   'each one is a rigidbody the physics step pays for.', '']
     return output
 
 

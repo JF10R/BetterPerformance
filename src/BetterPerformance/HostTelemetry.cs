@@ -49,6 +49,7 @@ namespace BetterPerformance
 
         internal static void Sample(List<NumberValue> gauges, List<TextValue> labels)
         {
+            labels.Add(new TextValue("host_net_status", NetStats(gauges)));
             if (!Windows)
             {
                 labels.Add(new TextValue("host_timer_resolution_status", "unsupported_platform"));
@@ -57,6 +58,28 @@ namespace BetterPerformance
             }
             labels.Add(new TextValue("host_timer_resolution_status", TimerResolution(gauges)));
             labels.Add(new TextValue("host_qpc_status", Counter(gauges)));
+        }
+
+        // The game's own F2 figures through ZNet.GetNetStats: Steam link quality, ping and
+        // byte rates. A client reports its server link; a server averages quality and ping
+        // and sums bytes over ready peers. The ping is the floor under every network leg
+        // the other probes report (loot arrival, owner grants), so those cannot be read
+        // without it.
+        private static string NetStats(List<NumberValue> gauges)
+        {
+            try
+            {
+                var network = ZNet.instance;
+                if (network == null) return "no_world";
+                network.GetNetStats(out float localQuality, out float remoteQuality, out int ping, out float outBytes, out float inBytes);
+                gauges.Add(new NumberValue("host_net_ping_ms", ping, "ms"));
+                gauges.Add(new NumberValue("host_net_out_bytes_per_sec", outBytes, "bytes_per_second"));
+                gauges.Add(new NumberValue("host_net_in_bytes_per_sec", inBytes, "bytes_per_second"));
+                gauges.Add(new NumberValue("host_net_quality_local", localQuality, "ratio"));
+                gauges.Add(new NumberValue("host_net_quality_remote", remoteQuality, "ratio"));
+                return network.IsServer() ? "server_peer_aggregate" : "client_server_link";
+            }
+            catch (Exception) { return "unavailable"; }
         }
 
         // Resolution is reported in 100ns units. The "minimum" value is the coarsest

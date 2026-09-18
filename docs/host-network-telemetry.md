@@ -111,3 +111,14 @@ lower bounds.
 Limits: counts of native calls, not latency; request completion latency is in the action
 telemetry. Hooks count only on the installing thread, anything else lands in
 `ownership_other_thread_skips`.
+
+## Native link figures (0.4.10)
+
+`host_net_ping_ms`, `host_net_out_bytes_per_sec`, `host_net_in_bytes_per_sec`,
+`host_net_quality_local` and `host_net_quality_remote` come from `ZNet.GetNetStats`, the same
+call behind the game's F2 overlay. `host_net_status` says what they describe:
+`client_server_link` on a client, `server_peer_aggregate` on a server (quality and ping averaged,
+bytes summed over ready peers), `no_world` before a session, `unavailable` if the call threw.
+They are sampled once per capture interval and are Steam's own estimates, not measured by the
+plugin. Read the loot-visibility network leg and the ownership grant waits against the ping:
+neither can be shorter than half of it.

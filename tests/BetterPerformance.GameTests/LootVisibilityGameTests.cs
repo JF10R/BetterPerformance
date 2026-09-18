@@ -77,13 +77,41 @@ internal static class LootVisibilityGameTests
             Check(zdo.Methods.Any(m => m.Name == name && m.Parameters.Count == 0 && m.ReturnType.FullName == returns),
                 "ZDO." + name + "() still returns " + returns);
 
-        // 4. The plugin side is three postfixes; none can replace or skip native work.
+        // 3b. t0 for trees, logs, plain rocks and destructibles: the owner's local destroy
+        //     and the remote removal, plus the instance map the remote hook reads.
+        MethodDefinition destroy = netScene.Methods.SingleOrDefault(m => m.Name == "Destroy" &&
+            m.Parameters.Count == 1 && m.Parameters[0].ParameterType.FullName == "UnityEngine.GameObject")
+            ?? throw new InvalidOperationException("Loot visibility: ZNetScene.Destroy(GameObject) is missing.");
+        Check(!destroy.IsStatic && destroy.ReturnType.FullName == "System.Void", "ZNetScene.Destroy(GameObject) is an instance void method");
+        Check(destroy.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Name == "DestroyZDO"),
+            "ZNetScene.Destroy still destroys the owned ZDO, which is what makes it a destruction rather than an unload");
+        MethodDefinition zdoDestroyed = netScene.Methods.SingleOrDefault(m => m.Name == "OnZDODestroyed" &&
+            m.Parameters.Count == 1 && m.Parameters[0].ParameterType.FullName == "ZDO")
+            ?? throw new InvalidOperationException("Loot visibility: ZNetScene.OnZDODestroyed(ZDO) is missing.");
+        Check(!zdoDestroyed.IsStatic && zdoDestroyed.ReturnType.FullName == "System.Void", "ZNetScene.OnZDODestroyed(ZDO) is an instance void handler");
+        FieldDefinition instanceMap = netScene.Fields.SingleOrDefault(f => f.Name == "m_instances")
+            ?? throw new InvalidOperationException("Loot visibility: ZNetScene.m_instances is missing.");
+        Check(!instanceMap.IsStatic && instanceMap.FieldType.FullName.StartsWith("System.Collections.Generic.Dictionary`2<ZDO,ZNetView>"),
+            "ZNetScene.m_instances still maps ZDO to ZNetView");
+        MethodDefinition removeObjects = netScene.Methods.Single(m => m.Name == "RemoveObjects");
+        Check(!removeObjects.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Resolve() == destroy),
+            "zone unload does not go through ZNetScene.Destroy, so an unload is never recorded as a destruction");
+        foreach (string component in new[] { "TreeBase", "TreeLog", "MineRock", "Destructible", "DropOnDestroyed" })
+            Check(gameModule.GetType(component) != null, component + " still exists for drop-source classification");
+        FieldDefinition dropInstances = gameModule.GetType("ItemDrop")!.Fields.SingleOrDefault(f => f.Name == "s_instances");
+        Check(dropInstances == null || (dropInstances.IsStatic && dropInstances.FieldType.FullName.StartsWith("System.Collections.Generic.List`1<ItemDrop>")),
+            "ItemDrop.s_instances, when present, is the static list the population gauge reads");
+
+        // 4. The plugin side is three postfixes and two prefixes that return void; none can
+        //    replace or skip native work.
         TypeDefinition module = pluginModule.GetType("BetterPerformance.LootVisibilityTelemetry")!;
         foreach (var (hook, types) in new[]
         {
             ("AfterSetAreaHealth", new[] { "MineRock5", "System.Single" }),
             ("AfterCreateNewZDO", new[] { "ZDOID", "UnityEngine.Vector3", "System.Int32" }),
             ("AfterCreateObject", new[] { "ZDO", "UnityEngine.GameObject" }),
+            ("BeforeDestroy", new[] { "UnityEngine.GameObject" }),
+            ("BeforeZdoDestroyed", new[] { "ZNetScene", "ZDO" }),
         })
         {
             MethodDefinition postfix = module.Methods.Single(m => m.Name == hook);

@@ -41,7 +41,13 @@ process dropped the ore itself.
 ## Probe, implemented
 
 `LootVisibilityTelemetry` plus `LootVisibilityTracker` in Core, exporting
-`loot_visibility_*`. Client side only, one clock — cross-process Stopwatch origins are
+`loot_visibility_*`. Since 0.4.10 t0 also comes from trees, logs, plain rocks and
+destructibles with a drop table: the owner's `ZNetScene.Destroy(GameObject)` (only for an
+owned ZDO — a non-owner reaching it is a zone unload, and `RemoveObjects` never calls it) and
+the remote `ZNetScene.OnZDODestroyed(ZDO)`. A felled tree's visible result is its `TreeLog`,
+so logs count as loot beside `ItemDrop`. `loot_visibility_destroyed_{rock,tree,log,destructible}`
+count the t0 events per source, and `item_drop_instances` is the live dropped-item population
+(each one a rigidbody the physics step pays for). Client side only, one clock — cross-process Stopwatch origins are
 offset on this runtime (`tasks/lessons.md`). Three postfixes: `MineRock5.RPC_SetAreaHealth`
 (t0, on every client whether or not it owns the rock), the private
 `ZDOMan.CreateNewZDO(ZDOID, Vector3, int)` whose zero prefab hash is what distinguishes a

@@ -22,6 +22,12 @@ namespace BetterPerformance
         private const int DestructionCapacity = 32, ArrivalCapacity = 256, PrefabCapacity = 1024, FailureLimit = 8;
         private static readonly Harmony Patches = new Harmony(Plugin.PluginId + ".LootVisibilityTelemetry");
         private static readonly Dictionary<int, bool> PrefabKinds = new Dictionary<int, bool>(PrefabCapacity);
+        // Prefab hash -> what kind of drop source its destruction is (0 none, 1 rock, 2 tree,
+        // 3 log, 4 destructible with a drop table). Same bound and reset as PrefabKinds.
+        private static readonly Dictionary<int, byte> SourceKinds = new Dictionary<int, byte>(PrefabCapacity);
+        private static AccessTools.FieldRef<ZNetScene, Dictionary<ZDO, ZNetView>>? instances;
+        private static AccessTools.FieldRef<List<ItemDrop>>? itemDrops;
+        private static long destroyedRock, destroyedTree, destroyedLog, destroyedDestructible;
         private static LootVisibilityTracker<ZDOID>? tracker;
         private static ConfigEntry<bool>? enabled;
         private static ConfigEntry<float>? radius;
@@ -51,7 +57,7 @@ namespace BetterPerformance
             if (Dedicated()) { Status = "dedicated-server"; return; }
             try
             {
-                var (areaHealth, createZdo, createObject) = ValidateContracts();
+                var (areaHealth, createZdo, createObject, destroy, zdoDestroyed) = ValidateContracts();
                 installedRadius = Math.Max(2, Math.Min(32, radius.Value));
                 installedWindowMs = Math.Max(1, Math.Min(15, windowSeconds.Value)) * 1000.0;
                 tracker = new LootVisibilityTracker<ZDOID>(DestructionCapacity, ArrivalCapacity,
@@ -59,6 +65,8 @@ namespace BetterPerformance
                 Patches.Patch(areaHealth, postfix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(AfterSetAreaHealth)));
                 Patches.Patch(createZdo, postfix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(AfterCreateNewZDO)));
                 Patches.Patch(createObject, postfix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(AfterCreateObject)));
+                Patches.Patch(destroy, prefix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(BeforeDestroy)));
+                Patches.Patch(zdoDestroyed, prefix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(BeforeZdoDestroyed)));
                 Installed = Enabled = true;
                 Status = "installed";
             }
@@ -77,8 +85,27 @@ namespace BetterPerformance
         // hooks once a world exists; a dedicated server then unpatches instead of sampling.
         private static bool Dedicated() => !ReferenceEquals(ZNet.instance, null) && ZNet.instance.IsDedicated();
 
-        private static (MethodInfo AreaHealth, MethodInfo CreateZdo, MethodInfo CreateObject) ValidateContracts()
+        private static (MethodInfo AreaHealth, MethodInfo CreateZdo, MethodInfo CreateObject, MethodInfo Destroy, MethodInfo ZdoDestroyed) ValidateContracts()
         {
+            // t0 for trees, logs, plain rocks and destructibles with a drop table: the owner
+            // destroys through ZNetScene.Destroy, every other client learns of it through
+            // OnZDODestroyed. MineRock5 areas keep their own hook since the object survives.
+            var destroy = AccessTools.DeclaredMethod(typeof(ZNetScene), "Destroy", new[] { typeof(GameObject) })
+                ?? throw new InvalidOperationException("ZNetScene.Destroy(GameObject) is missing.");
+            if (destroy.IsStatic || destroy.ReturnType != typeof(void))
+                throw new InvalidOperationException("Unsupported ZNetScene.Destroy signature.");
+            var zdoDestroyed = AccessTools.DeclaredMethod(typeof(ZNetScene), "OnZDODestroyed", new[] { typeof(ZDO) })
+                ?? throw new InvalidOperationException("ZNetScene.OnZDODestroyed(ZDO) is missing.");
+            if (zdoDestroyed.IsStatic || zdoDestroyed.ReturnType != typeof(void))
+                throw new InvalidOperationException("Unsupported ZNetScene.OnZDODestroyed signature.");
+            var instanceField = AccessTools.DeclaredField(typeof(ZNetScene), "m_instances");
+            if (instanceField == null || instanceField.IsStatic || instanceField.FieldType != typeof(Dictionary<ZDO, ZNetView>))
+                throw new InvalidOperationException("Unsupported ZNetScene.m_instances field.");
+            instances = AccessTools.FieldRefAccess<ZNetScene, Dictionary<ZDO, ZNetView>>(instanceField);
+            // Optional population gauge; its absence costs a gauge, not the probe.
+            var dropList = AccessTools.DeclaredField(typeof(ItemDrop), "s_instances");
+            itemDrops = dropList != null && dropList.IsStatic && dropList.FieldType == typeof(List<ItemDrop>)
+                ? AccessTools.StaticFieldRefAccess<List<ItemDrop>>(dropList) : null;
             var areaHealth = AccessTools.DeclaredMethod(typeof(MineRock5), "RPC_SetAreaHealth",
                 new[] { typeof(long), typeof(int), typeof(float) })
                 ?? throw new InvalidOperationException("MineRock5.RPC_SetAreaHealth(long, int, float) is missing.");
@@ -100,7 +127,7 @@ namespace BetterPerformance
                 AccessTools.DeclaredMethod(typeof(ZDO), "IsOwner", Type.EmptyTypes)?.ReturnType != typeof(bool) ||
                 AccessTools.DeclaredMethod(typeof(ZDO), "GetPrefab", Type.EmptyTypes)?.ReturnType != typeof(int))
                 throw new InvalidOperationException("Unsupported ZDO accessor contract.");
-            return (areaHealth, createZdo, createObject);
+            return (areaHealth, createZdo, createObject, destroy, zdoDestroyed);
         }
 
         private static double NowMs() => Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
@@ -128,6 +155,7 @@ namespace BetterPerformance
             {
                 current.Clear(true);
                 PrefabKinds.Clear();
+                SourceKinds.Clear();
                 scene = new WeakReference<ZNetScene>(currentScene);
             }
             return true;
@@ -177,7 +205,8 @@ namespace BetterPerformance
                     if (PrefabKinds.Count >= PrefabCapacity) { unknownPrefabs++; return; }
                     var prefab = ZNetScene.instance.GetPrefab(hash);
                     if (prefab == null) { unknownPrefabs++; return; }
-                    loot = prefab.GetComponent<ItemDrop>() != null;
+                    // A felled tree's visible result is its log, which is not an ItemDrop.
+                    loot = prefab.GetComponent<ItemDrop>() != null || prefab.GetComponent<TreeLog>() != null;
                     PrefabKinds.Add(hash, loot);
                 }
                 if (!loot) return;
@@ -185,6 +214,60 @@ namespace BetterPerformance
                 current.Created(__0.m_uid, position.x, position.y, position.z, NowMs(), __0.IsOwner());
             }
             catch (Exception exception) { Fail(exception); }
+        }
+
+        // Owner side: the object is destroyed locally and its drops are instantiated here.
+        // Only an owned ZDO is a destruction; a non-owner reaching Destroy is a zone unload.
+        private static void BeforeDestroy(GameObject __0)
+        {
+            var current = Observing();
+            if (current == null || __0 == null) return;
+            try
+            {
+                var view = __0.GetComponent<ZNetView>();
+                var zdo = view != null ? view.GetZDO() : null;
+                if (zdo == null || !zdo.IsOwner()) return;
+                if (!Bind(current)) return;
+                Record(current, zdo.GetPrefab(), __0, __0.transform.position);
+            }
+            catch (Exception exception) { Fail(exception); }
+        }
+
+        // Remote side: the owner's destruction arrives as a ZDO removal.
+        private static void BeforeZdoDestroyed(ZNetScene __instance, ZDO __0)
+        {
+            var current = Observing();
+            if (current == null || __0 == null || instances == null || __instance == null) return;
+            try
+            {
+                if (!instances(__instance).TryGetValue(__0, out var view) || view == null) return;
+                if (!Bind(current)) return;
+                Record(current, __0.GetPrefab(), view.gameObject, __0.GetPosition());
+            }
+            catch (Exception exception) { Fail(exception); }
+        }
+
+        private static void Record(LootVisibilityTracker<ZDOID> current, int hash, GameObject go, Vector3 position)
+        {
+            if (!SourceKinds.TryGetValue(hash, out byte kind))
+            {
+                if (SourceKinds.Count >= PrefabCapacity) { unknownPrefabs++; return; }
+                kind = go.GetComponent<TreeBase>() != null ? (byte)2
+                    : go.GetComponent<TreeLog>() != null ? (byte)3
+                    : go.GetComponent<MineRock>() != null ? (byte)1
+                    : go.GetComponent<Destructible>() != null && go.GetComponent<DropOnDestroyed>() != null ? (byte)4
+                    : (byte)0;
+                SourceKinds.Add(hash, kind);
+            }
+            if (kind == 0) return;
+            switch (kind)
+            {
+                case 1: destroyedRock++; break;
+                case 2: destroyedTree++; break;
+                case 3: destroyedLog++; break;
+                default: destroyedDestructible++; break;
+            }
+            current.Destroyed(position.x, position.y, position.z, NowMs());
         }
 
         // A single failure is tolerated and counted; repeated failures stop the module for
@@ -198,6 +281,7 @@ namespace BetterPerformance
             Status = "failed";
             tracker?.Clear(true);
             PrefabKinds.Clear();
+            SourceKinds.Clear();
             logger.LogWarning("Loot visibility diagnostics disabled after repeated observation failures: " +
                 exception.GetType().Name);
         }
@@ -212,7 +296,15 @@ namespace BetterPerformance
             labels.Add(new TextValue("loot_visibility_enabled", Enabled && Status == "installed" ? "true" : "false"));
             gauges.Add(new NumberValue("loot_visibility_probe_failures", intervalFailures, "calls"));
             gauges.Add(new NumberValue("loot_visibility_unknown_prefabs", unknownPrefabs, "observations"));
+            gauges.Add(new NumberValue("loot_visibility_destroyed_rock", destroyedRock, "events"));
+            gauges.Add(new NumberValue("loot_visibility_destroyed_tree", destroyedTree, "events"));
+            gauges.Add(new NumberValue("loot_visibility_destroyed_log", destroyedLog, "events"));
+            gauges.Add(new NumberValue("loot_visibility_destroyed_destructible", destroyedDestructible, "events"));
             intervalFailures = unknownPrefabs = 0;
+            destroyedRock = destroyedTree = destroyedLog = destroyedDestructible = 0;
+            // Live dropped-item population: every one is a rigidbody the physics step pays for.
+            try { if (itemDrops != null) gauges.Add(new NumberValue("item_drop_instances", itemDrops().Count, "instances")); }
+            catch (Exception exception) { Fail(exception); }
             if (tracker == null) return;
             var summary = tracker.Drain(NowMs());
             gauges.Add(new NumberValue("loot_visibility_radius", installedRadius, "metres"));
@@ -247,6 +339,8 @@ namespace BetterPerformance
         {
             tracker?.Clear(false);
             PrefabKinds.Clear();
+            SourceKinds.Clear();
+            destroyedRock = destroyedTree = destroyedLog = destroyedDestructible = 0;
             capture = null;
             scene = null;
             unknownPrefabs = intervalFailures = 0;
