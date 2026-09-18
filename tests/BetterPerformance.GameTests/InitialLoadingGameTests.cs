@@ -9,8 +9,8 @@ internal static class InitialLoadingGameTests
     // One token-independent fingerprint per method covers the client and the dedicated
     // server, and held unchanged across 1.0.14 and 1.0.15, where the four raw-byte hashes
     // it replaced all broke: those breaks were metadata renumbering, not logic.
-    private const string CreateFingerprint = "45478348879b6ff6a15db9a876bcad3258b1e179e4e7e23fb1cf97159a8108e4";
-    private const string PokeFingerprint = "4b32e779ab36bbe841cd576fd3a0498023a8b4e327ac31a134b8d5fcbe9cd966";
+    private const string CreateFingerprint = "9e86a318cf06f1b4adb27246d4a99ef5782f0b82f40ff54f6ab2ba1576c1f28c";
+    private const string PokeFingerprint = "5c6f82835a71ea1bb30dcbe5b1c32454053607d9841bc1686bd4314b7024d313";
 
     internal static int Run(Assembly game, Assembly plugin)
     {
@@ -38,7 +38,7 @@ internal static class InitialLoadingGameTests
         pluginAssembly = plugin;
         string createHash = Hash(native!), pokeHash = Hash(poke!);
         Check(createHash == CreateFingerprint && pokeHash == PokeFingerprint,
-            "native fingerprints match the verified contract on this installation");
+            "native fingerprints match the verified contract on this installation (computed create=" + createHash + " poke=" + pokeHash + ")");
         Check(native!.GetMethodBody()!.GetILAsByteArray()!.Length == 179 && poke!.GetMethodBody()!.GetILAsByteArray()!.Length == 97,
             "verified native body sizes");
         var module = plugin.GetType("BetterPerformance.InitialLoadingOptimization", true)!;

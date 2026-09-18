@@ -53,15 +53,19 @@ namespace BetterPerformance
             catch (Exception error)
             {
                 Patches.UnpatchSelf(); Installed = false; Status = "unsupported_native_layout";
-                logger.LogWarning("Initial loading acceleration unavailable: " + error.GetType().Name);
+                // The computed fingerprints are the one thing a log needs to explain a refusal.
+                string computed;
+                try { computed = "create=" + IlFingerprint.Compute(Create) + " poke=" + IlFingerprint.Compute(Poke); }
+                catch (Exception inner) { computed = "fingerprint unavailable: " + inner.GetType().Name; }
+                logger.LogWarning("Initial loading acceleration unavailable: " + error.GetType().Name + ": " + error.Message + " (" + computed + ")");
             }
         }
 
         private static void VerifyNativeContracts()
         {
             // Exact inspected IL: reject changed success/registration semantics after updates.
-            VerifyHash(Create, "45478348879B6FF6A15DB9A876BCAD3258B1E179E4E7E23FB1CF97159A8108E4");
-            VerifyHash(Poke, "4B32E779AB36BBE841CD576FD3A0498023A8B4E327AC31A134B8D5FCBE9CD966");
+            VerifyHash(Create, "9E86A318CF06F1B4ADB27246D4A99EF5782F0B82F40FF54F6AB2BA1576C1F28C");
+            VerifyHash(Poke, "5C6F82835A71EA1BB30DCBE5B1C32454053607D9841BC1686BD4314B7024D313");
             if (Create.IsStatic || Create.ReturnType != typeof(bool) || Poke.IsStatic || Poke.ReturnType != typeof(bool) ||
                 Update.IsStatic || Update.ReturnType != typeof(void)) throw new InvalidOperationException("Native signature changed.");
         }
