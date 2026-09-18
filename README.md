@@ -17,8 +17,8 @@ Diagnostics are always on. Each optimization is one switch, off by default, and 
 | Network: fish and bird update throttling | `Replication.CosmeticResendIntervalEnabled` | About 15 to 20 % less traffic sent by the machine that owns them; everyone receives fewer updates | Client and server | Yes, they receive less traffic | Deferral measured, traffic not yet |
 | Network: bird velocity | `Replication.BirdVelocityEnabled` | Birds fly smoothly on other players' screens instead of lagging and jumping | The bird owner's client (usually the host) | Yes, the fix is in the data they receive | Expected |
 | Pickup: owner-grant expedite | `Ownership.ExpediteOwnerGrantsEnabled` | Picking up an item another player owns responds sooner (targets the 0.5 s waits) | Server | Yes, no client mod needed | Expected |
-| Terraforming: neighbour-save coalescing | `Terrain.CoalesceNeighbourSavesEnabled` | Less lag when terraforming near zone borders: one save per neighbour instead of one per pixel | The machine that owns the terrain (the terraformer's client, or the server) | Yes, for everyone waiting on that frame | Expected |
 | Loading: object creation budget and quota | `ObjectLoading.*` | Objects appear more evenly while loading; loot up to 40 % sooner in one test, mixed elsewhere | Your client | No | Measured, workload-dependent |
+| Join and server world load: biome point cache | `BiomeCache.Enabled`, `Mode` | Skips the 4-5 s biome grid generation once an entry has reproduced byte-for-byte; serves nothing before that. |
 | Network: local package copy removal | `NetworkMemory.LocalPackageCopyEnabled` | Fewer memory allocations while replicating; no visible change | Client and server | Indirectly | Measured helper only |
 
 Nothing here changes world saves, ownership rules, item duplication guards, the wire format or combat outcomes. Details and sources: the [roadmap](docs/improvement-roadmap-2026-09-15.md), the [0.4.5 validation](docs/validation-0.4.5.md) and the [game update guide](docs/game-update-guide.md).
@@ -75,7 +75,6 @@ The diagnostics phase is intended to coexist with BetterNetworking. Queue measur
 - [Minimap texture cache with shadow verification](docs/minimap-cache.md)
 - [Replication cadence and bird velocity](docs/replication-cadence.md)
 - [Server owner-grant expedite](docs/ownership-expedite.md)
-- [Terrain neighbour-save coalescing](docs/terrain-save-coalescing.md)
 - [GUI group sound and mined-drop placement](docs/gui-sound-and-drop-placement.md)
 - [Smelter catch-up budget](docs/smelter-catchup-budget.md), [dungeon spawn slicing](docs/dungeon-spawn-slicing.md), [speculative map pre-compression](docs/map-precompression.md)
 - [Play session 2026-09-16: executive report](docs/session-report-2026-09-16.md) and the 2026-09-17 research: [clutter](docs/clutter-research-2026-09-17.md), [station catch-up](docs/station-catchup-research-2026-09-17.md), [build-mode placement](docs/placement-research-2026-09-17.md), [ownership release](docs/ownership-release-research-2026-09-17.md), [save pre-compression](docs/save-precompression-research-2026-09-17.md), [dungeon spawn](docs/dungeon-spawn-research-2026-09-17.md)
@@ -88,6 +87,7 @@ The diagnostics phase is intended to coexist with BetterNetworking. Queue measur
 - [Frontier loading research](docs/fast-loading-frontier-2026-09-15.md)
 - [Real-session profile, slow operations and loot diagnostics](docs/play-session.md)
 - [Mined-loot visibility latency](docs/loot-visibility-latency-2026-09-17.md)
+- [Biome point cache](docs/biome-point-cache.md) and its [research](docs/biome-generation-research-2026-09-18.md)
 - [Configuration history and diagnostic interpretation](docs/configuration-history.md)
 - [Frontier research and next experiments](docs/frontier-research-2026-09-15.md)
 - [0.4.0 feature disposition and implementation](docs/frontier-implementation-0.4.0.md)

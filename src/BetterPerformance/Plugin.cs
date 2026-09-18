@@ -87,9 +87,10 @@ namespace BetterPerformance
             CloudWriteOptimization.Install(Config, Logger);
             // Minimap texture cache: shadow-compares before it is ever trusted; self-gates when disabled.
             MinimapTextureCache.Install(Config, Logger);
+            // Biome point cache: 1.0.14 disabled the native one; ours keys on seed, uid, versions, generator IL and mods.
+            BiomePointCache.Install(Config, Logger);
             // Replication cadence and bird velocity stay behind their own [Replication] keys.
             ReplicationCadence.Install(Config, Logger);
-            TerrainSaveCoalescing.Install(Config, Logger);
             // GUI group-sound deduplication and mined-drop placement stay behind their own keys.
             GuiSoundDeduplication.Install(Config, Logger);
             MiningDropPlacement.Install(Config, Logger);
@@ -333,7 +334,7 @@ namespace BetterPerformance
                 new TextValue("configuration_semantics", "graphics_applied_event_plus_poll; raw_player_and_active_are_distinct; synchronized_simulation_is_separate; poll_changes_are_observation_times; max_128_field_changes_per_export"),
                 new TextValue("game_version", global::Version.GetVersionString(false)),
                 new TextValue("mode", ObjectCreationBudget.Installed || InitialLoadingOptimization.Installed || FastMapSerialization.Installed || MapCompressionCache.Installed || PackageCopyOptimization.Installed
-                    || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || TerrainSaveCoalescing.Enabled
+                    || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || BiomePointCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled
                     || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled || SmelterCatchupBudget.Enabled || DungeonSpawnSlicing.Enabled || MapPrecompression.Installed
                     ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
                 new TextValue("map_serialization_status", FastMapSerialization.Status),
@@ -369,7 +370,6 @@ namespace BetterPerformance
             OwnershipExpedite.Reset();
             ReplicationCadence.Reset();
             ReplicationTelemetry.Reset();
-            TerrainSaveCoalescing.Reset();
             GuiSoundDeduplication.Reset();
             MiningDropPlacement.Reset();
             SmelterCatchupBudget.Reset();
@@ -411,12 +411,12 @@ namespace BetterPerformance
             PackageCopyOptimization.Sample(gauges, labels);
             CloudWriteOptimization.Sample(gauges, labels);
             MinimapTextureCache.Sample(gauges, labels);
+            BiomePointCache.Sample(gauges, labels);
             ActionTelemetry.Sample(gauges, labels);
             OwnershipTelemetry.Sample(gauges, labels);
             OwnershipExpedite.Sample(gauges, labels);
             ReplicationCadence.Sample(gauges, labels);
             ReplicationTelemetry.Sample(gauges, labels);
-            TerrainSaveCoalescing.Sample(gauges, labels);
             GuiSoundDeduplication.Sample(gauges, labels);
             MiningDropPlacement.Sample(gauges, labels);
             SmelterCatchupBudget.Sample(gauges, labels);
@@ -526,7 +526,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { ReplicationCadence.Sample(gauges, labels); ReplicationTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { TerrainSaveCoalescing.Sample(gauges, labels); TerrainTelemetry.Sample(gauges, labels); }
+            try { TerrainTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { GuiSoundDeduplication.Sample(gauges, labels); MiningDropPlacement.Sample(gauges, labels); SmelterCatchupBudget.Sample(gauges, labels); DungeonSpawnSlicing.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -543,7 +543,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { InitialLoadingOptimization.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { MapCompressionCache.Sample(gauges, labels); MapPrecompression.Sample(gauges, labels); PackageCopyOptimization.Sample(gauges, labels); CloudWriteOptimization.Sample(gauges, labels); MinimapTextureCache.Sample(gauges, labels); }
+            try { MapCompressionCache.Sample(gauges, labels); MapPrecompression.Sample(gauges, labels); PackageCopyOptimization.Sample(gauges, labels); CloudWriteOptimization.Sample(gauges, labels); MinimapTextureCache.Sample(gauges, labels); BiomePointCache.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { EngineTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -572,12 +572,12 @@ namespace BetterPerformance
             PackageCopyOptimization.Uninstall();
             CloudWriteOptimization.Uninstall();
             MinimapTextureCache.Uninstall();
+            BiomePointCache.Uninstall();
             ActionTelemetry.Uninstall();
             OwnershipTelemetry.Uninstall();
             OwnershipExpedite.Uninstall();
             ReplicationCadence.Uninstall();
             ReplicationTelemetry.Uninstall();
-            TerrainSaveCoalescing.Uninstall();
             GuiSoundDeduplication.Uninstall();
             MiningDropPlacement.Uninstall();
             SmelterCatchupBudget.Uninstall();

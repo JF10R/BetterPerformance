@@ -61,9 +61,10 @@ Then read the captures with `scripts/summarize_capture.py` and confirm: `probe_f
 | Minimap texture cache | `Minimap.GenerateWorldMap` IL closure and texture formats | `MinimapTextureCache.cs` |
 | Replication cadence | `ZDOMan.CreateSyncList`, `ZDOPeer`/`PeerZDOInfo` fields, `ZSyncTransform.OwnerSync` | `ReplicationCadence.cs`, `ReplicationTelemetry.cs` |
 | Owner-grant expedite | `ZDOMan.RPC_ZDOData` apply sites, `ZDO.SetOwnerInternal` | `OwnershipExpedite.cs` |
-| Terrain coalescing | `TerrainComp.PaintCleared` local functions and `Save` gate | `TerrainSaveCoalescing.cs` |
+| Terrain attribution | `Heightmap.Regenerate`/`OnEnable` and the `TerrainComp` paint entry points | `TerrainTelemetry.cs` |
 | Attribution | `ZRoutedRpc.HandleRoutedRPC`, `RoutedRPCData` fields, `ZDO.Serialize` | `AttributionTelemetry.cs` |
 | Loading details | Which subpaths `AltBiomeWorldData.VerifyBiomeData` calls | `LoadingDetailsTelemetry.cs` |
+| Biome point cache | `AltBiomeWorldData.GenerateBiomePoints`, `Save`/`Load`, `m_world`; any `WorldGenerator` change re-keys the cache by design | `BiomePointCache.cs` |
 | Loot visibility | `MineRock5.RPC_SetAreaHealth`, the private `ZDOMan.CreateNewZDO(ZDOID, Vector3, int)` and its zero-hash arrival call site | `LootVisibilityTelemetry.cs` |
 
 A pinned raw-IL hash is the most update-fragile contract there is: the bytes include

@@ -290,6 +290,7 @@ Module("GameplayProbes", () => GameplayProbesGameTests.Run(game, plugin));
 Module("GuiSound", () => GuiSoundGameTests.Run(game, plugin));
 Module("Mining", () => MiningGameTests.Run(game, plugin));
 Module("LootVisibility", () => LootVisibilityGameTests.Run(game, plugin));
+Module("BiomeCache", () => BiomeCacheGameTests.Run(game, plugin));
 Module("Smelter", () => SmelterGameTests.Run(game, plugin));
 Module("Dungeon", () => DungeonGameTests.Run(game, plugin));
 Module("MapPrecompression", () => MapPrecompressionGameTests.Run(game, plugin));
