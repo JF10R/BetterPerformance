@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.12";
+        public const string PluginVersion = "0.4.13";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -164,6 +164,8 @@ namespace BetterPerformance
             // 0.4.12 [Network]: adaptive send window + rate policy, and framed compression; both yield to BetterNetworking.
             NetworkFlow.Install(Config, Logger);
             NetworkCompression.Install(Config, Logger);
+            // 0.4.13 [Relay]: a client mirrors its capture (and optionally its log) to a server that accepts them.
+            CaptureRelay.Install(Config, Logger, Path.Combine(Paths.BepInExRootPath, "BetterPerformance", "captures"));
             ReplicationTelemetry.Install(Config, Logger);
             ReplicationTelemetry.Enabled = ReplicationTelemetry.Installed;
             TerrainTelemetry.Install(Config, Logger);
@@ -256,8 +258,10 @@ namespace BetterPerformance
             try
             {
                 EngineTelemetry.NoteFrame();
+                CaptureRelay.Pump();
                 if (retiring != null && retiring.Writer.Finish(0))
                 {
+                    CaptureRelay.CaptureFinished(retiring.OutputPath);
                     Logger.LogInfo("Capture export finished. Written records: " + retiring.Writer.WrittenRecords
                         + "; dropped: " + retiring.Writer.DroppedRecords + "; error: " + (retiring.Writer.LastError ?? "none"));
                     if (retiring.Writer.LastError != null) continuePending = false;
@@ -376,6 +380,7 @@ namespace BetterPerformance
             SectorInvalidationFix.Reset();
             NetworkFlow.Reset();
             NetworkCompression.Reset();
+            CaptureRelay.Reset();
             ReplicationCadence.Reset();
             ReplicationTelemetry.Reset();
             GuiSoundDeduplication.Reset();
@@ -389,7 +394,7 @@ namespace BetterPerformance
             EngineTelemetry.Reset();
             current = new CaptureSession(directory,
                 Role(), duration.Value, interval.Value, capacity.Value, fileLimit.Value * 1024L * 1024L, metadata,
-                slowOperations.Value, slowMethodMs.Value, slowLoopMs.Value, slowWorkerMs.Value, startGauges);
+                slowOperations.Value, slowMethodMs.Value, slowLoopMs.Value, slowWorkerMs.Value, startGauges, CaptureRelay.Tee);
             ActionTelemetry.StartCapture();
             AttributionTelemetry.StartCapture();
             LoadingTelemetry.StartCapture();
@@ -426,6 +431,7 @@ namespace BetterPerformance
             SectorInvalidationFix.Sample(gauges, labels);
             NetworkFlow.Sample(gauges, labels);
             NetworkCompression.Sample(gauges, labels);
+            CaptureRelay.Sample(gauges, labels);
             ReplicationCadence.Sample(gauges, labels);
             ReplicationTelemetry.Sample(gauges, labels);
             GuiSoundDeduplication.Sample(gauges, labels);
@@ -533,7 +539,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { ActionTelemetry.Finish(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { OwnershipTelemetry.Sample(gauges, labels); OwnershipExpedite.Sample(gauges, labels); SectorInvalidationFix.Sample(gauges, labels); NetworkFlow.Sample(gauges, labels); NetworkCompression.Sample(gauges, labels); }
+            try { OwnershipTelemetry.Sample(gauges, labels); OwnershipExpedite.Sample(gauges, labels); SectorInvalidationFix.Sample(gauges, labels); NetworkFlow.Sample(gauges, labels); NetworkCompression.Sample(gauges, labels); CaptureRelay.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { ReplicationCadence.Sample(gauges, labels); ReplicationTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -590,6 +596,7 @@ namespace BetterPerformance
             SectorInvalidationFix.Uninstall();
             NetworkFlow.Uninstall();
             NetworkCompression.Uninstall();
+            CaptureRelay.Uninstall();
             ReplicationCadence.Uninstall();
             ReplicationTelemetry.Uninstall();
             GuiSoundDeduplication.Uninstall();

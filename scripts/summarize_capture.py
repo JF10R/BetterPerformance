@@ -51,6 +51,9 @@ def load_capture(path):
             warnings.append(f"Writer stopped because of: {reason}.")
     if not any(r.get("kind") == "capture_end" for r in records):
         warnings.append("Capture-end record missing; final timing samples or stop reason may be unavailable.")
+    for trailer in (r for r in records if r.get("kind") == "relay_end"):
+        reason = named(trailer.get("labels", [])).get("reason", "unknown")
+        warnings.append(f"Relayed copy closed by the server ({reason}); the client's local file is the complete one.")
     return records, warnings
 
 

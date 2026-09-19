@@ -18,6 +18,10 @@ namespace BetterPerformance.Core
         private readonly Func<Stream> openStream;
         private readonly long maxBytes;
         private readonly bool leaveOpen;
+        // Optional mirror of every encoded line (without its newline), called on the worker
+        // thread after the line is on disk. Its failures are counted, never propagated.
+        private readonly Action<byte[]>? onLine;
+        private long teeFailures;
         private bool accepting = true;
         private bool disposed;
         private long dropped, rejected, written, accepted, bytes, lastWriteTicks;
@@ -33,9 +37,11 @@ namespace BetterPerformance.Core
         public string? LastError => lastError;
         public bool LimitReached => limitReached;
         public string Priority => priority;
+        public long TeeFailures => Interlocked.Read(ref teeFailures);
 
-        public CaptureWriter(Func<Stream> openStream, int capacity, long maxBytes, bool leaveOpen = false)
+        public CaptureWriter(Func<Stream> openStream, int capacity, long maxBytes, bool leaveOpen = false, Action<byte[]>? onLine = null)
         {
+            this.onLine = onLine;
             if (capacity < 1 || capacity > 256) throw new ArgumentOutOfRangeException(nameof(capacity));
             if (maxBytes < FooterReserveBytes * 2) throw new ArgumentOutOfRangeException(nameof(maxBytes));
             this.openStream = openStream ?? throw new ArgumentNullException(nameof(openStream));
@@ -154,6 +160,9 @@ namespace BetterPerformance.Core
             stream.Write(encoded, 0, encoded.Length);
             stream.WriteByte((byte)'\n');
             Interlocked.Add(ref bytes, encoded.Length + 1);
+            if (onLine == null) return;
+            try { onLine(encoded); }
+            catch (Exception) { Interlocked.Increment(ref teeFailures); }
         }
 
         public void Dispose()

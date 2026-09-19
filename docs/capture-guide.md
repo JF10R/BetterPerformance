@@ -73,6 +73,6 @@ The optional `BetterPerformance.Plugin.Mark("loot_spawn")` API and local `bp_mar
 
 ### Privacy and limitations
 
-Captures remain local and are not uploaded automatically. Routine capture excludes player names/IDs, IP addresses, world names, RPC payloads and save contents. It records game/mod versions, process role, timestamps, settings and aggregate measurements. Review captures before sharing them.
+Captures remain local unless the client opts into the [capture relay](capture-relay.md) towards a server that accepts them; the relay adds nothing to their content. Routine capture excludes player names/IDs, IP addresses, world names, RPC payloads and save contents. It records game/mod versions, process role, timestamps, settings and aggregate measurements. Review captures before sharing them.
 
 This version does not measure GPU time, exact packet throughput, compression ratio, end-to-end action latency, pure disk I/O duration, or another computer's frame times. Steam rate estimates cover only its native transport. Network counters that reset game statistics are deliberately not called. See [the metric definitions](measurements.md) before drawing conclusions.

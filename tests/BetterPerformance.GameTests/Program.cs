@@ -284,6 +284,7 @@ Module("SectorInvalidation", () => SectorInvalidationGameTests.Run(game, plugin)
 Module("HostNet", () => HostNetGameTests.Run(game, plugin));
 Module("NetworkFlow", () => NetworkFlowGameTests.Run(game, plugin));
 Module("NetworkCompression", () => NetworkCompressionGameTests.Run(game, plugin));
+Module("CaptureRelay", () => CaptureRelayGameTests.Run(game, plugin));
 Module("Simulation", () => SimulationGameTests.Run(game, plugin));
 Module("Attribution", () => AttributionGameTests.Run(game, plugin));
 Module("CloudWrite", () => CloudWriteGameTests.Run(game, plugin, managedDirectory));

@@ -41,7 +41,7 @@ namespace BetterPerformance
         internal CaptureSession(string directory, string role, double duration, double interval, int capacity,
             long maxBytes, List<TextValue> metadata, bool slowOperations = true,
             double slowMethodMs = 20, double slowLoopMs = 100, double slowWorkerMs = 250,
-            List<NumberValue>? startGauges = null)
+            List<NumberValue>? startGauges = null, Func<string, Action<byte[]>?>? tee = null)
         {
             Clock = new CaptureClock(DateTime.UtcNow, Stopwatch.GetTimestamp(), Stopwatch.Frequency);
             DurationSeconds = duration;
@@ -57,7 +57,7 @@ namespace BetterPerformance
             {
                 Directory.CreateDirectory(directory);
                 return new FileStream(OutputPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-            }, capacity, maxBytes);
+            }, capacity, maxBytes, leaveOpen: false, onLine: tee?.Invoke(Path.GetFileName(OutputPath)));
             metadata.Add(new TextValue("role", role));
             var gauges = new List<NumberValue> {
                     new NumberValue("duration_limit", duration, "seconds"),

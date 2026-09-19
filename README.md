@@ -22,6 +22,7 @@ Diagnostics are always on. Each optimization is one switch, off by default, and 
 | Network: local package copy removal | `NetworkMemory.LocalPackageCopyEnabled` | Fewer memory allocations while replicating; no visible change | Client and server | Indirectly | Measured helper only |
 | Network: adaptive send window and rate policy | `Network.AdaptiveFlowEnabled` | Replaces BetterNetworking's Queue Size and Send Rate: the ZDO send gate follows each peer's measured link instead of a fixed 10 KB (vanilla) or 32-80 KB (menu); the Steam rate is pinned high only on LAN | Client and server (each shapes its own sending) | Yes, the receiver needs nothing | Mechanism verified; runtime measured on the test world only |
 | Network: packet compression | `Network.CompressionEnabled` | Replaces BetterNetworking's compression: framed Deflate to peers on the same plugin version, negotiated per connection | Every peer that should receive compressed data | No, both ends need the plugin; others stay vanilla | Mechanism verified; ratio measured on the test world only |
+| Diagnostics: capture relay | `Relay.SendCapturesEnabled`, `Relay.SendLogEnabled`, `Relay.AcceptEnabled` | The server collects the other players' captures (and, if they opt in, their BepInEx log) under `captures/remote` as they play; about 16 KB/s per client, sent only while the link is idle | Sending clients and the server | Not a gameplay change; a vanilla server just ignores the offer | Mirror proven byte-identical offline; live cost measured on the test world only |
 | Network: teleport ghost fix | `Replication.SectorInvalidationFixEnabled` | A player who goes through a portal disappears at once on everyone else's screen instead of standing frozen in the portal until they cross another 64 m zone; same for any object that jumps out of a player's area | Server | Yes, no client mod needed | Mechanism verified in the game code; runtime unmeasured |
 
 Nothing here changes world saves, ownership rules, item duplication guards, the wire format or combat outcomes. Details and sources: the roadmap, the 0.4.5 validation and the [game update guide](docs/game-update-guide.md).
@@ -87,6 +88,7 @@ Project documentation only: guides, each optimization module, and each telemetry
 - [Speculative map pre-compression](docs/map-precompression.md)
 - [Network flow: adaptive send window and rate policy](docs/network-flow.md)
 - [Network compression](docs/network-compression.md)
+- [Capture relay: client captures and logs mirrored to the server](docs/capture-relay.md)
 - [Smelter: catch-up telemetry (and the removed catch-up budget)](docs/smelter-catchup-budget.md)
 - [Terrain: attribution telemetry (and the removed neighbour-save coalescing)](docs/terrain-save-coalescing.md)
 - [Client loading timeline](docs/loading-telemetry.md)

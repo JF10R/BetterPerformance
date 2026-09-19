@@ -31,7 +31,9 @@ internal static class Program
             SendWindowControllerTests.TargetFormulaAndClamps, SendWindowControllerTests.BackoffHoldAndRecovery,
             SendWindowControllerTests.TimeValidationCapacityAndDrain,
             CompressionFrameTests.RoundTrip, CompressionFrameTests.PassThrough,
-            CompressionFrameTests.RejectsMalformedFrames };
+            CompressionFrameTests.RejectsMalformedFrames,
+            CaptureRelayTests.NamesAndIds, CaptureRelayTests.OutboxSplitsFramesAndBounds, CaptureRelayTests.LineBatcher,
+            CaptureRelayTests.SinkReassemblesAndCloses, CaptureRelayTests.SinkRefusesBrokenStreams, CaptureRelayTests.RoundTripMirrorsWriterOutput };
         int failures = 0;
         foreach (var test in tests)
         {
