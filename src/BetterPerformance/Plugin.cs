@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.11";
+        public const string PluginVersion = "0.4.12";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -161,6 +161,9 @@ namespace BetterPerformance
             OwnershipExpedite.Install(Config, Logger);
             // Server-side teleport-ghost fix: re-issues the native sector invalidation after the position write.
             SectorInvalidationFix.Install(Config, Logger);
+            // 0.4.12 [Network]: adaptive send window + rate policy, and framed compression; both yield to BetterNetworking.
+            NetworkFlow.Install(Config, Logger);
+            NetworkCompression.Install(Config, Logger);
             ReplicationTelemetry.Install(Config, Logger);
             ReplicationTelemetry.Enabled = ReplicationTelemetry.Installed;
             TerrainTelemetry.Install(Config, Logger);
@@ -336,7 +339,7 @@ namespace BetterPerformance
                 new TextValue("configuration_semantics", "graphics_applied_event_plus_poll; raw_player_and_active_are_distinct; synchronized_simulation_is_separate; poll_changes_are_observation_times; max_128_field_changes_per_export"),
                 new TextValue("game_version", global::Version.GetVersionString(false)),
                 new TextValue("mode", ObjectCreationBudget.Installed || InitialLoadingOptimization.Installed || FastMapSerialization.Installed || MapCompressionCache.Installed || PackageCopyOptimization.Installed
-                    || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || BiomePointCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || SectorInvalidationFix.Enabled
+                    || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || BiomePointCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || SectorInvalidationFix.Enabled || NetworkFlow.Enabled || NetworkCompression.Enabled
                     || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled || DungeonSpawnSlicing.Enabled || MapPrecompression.Installed
                     ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
                 new TextValue("map_serialization_status", FastMapSerialization.Status),
@@ -371,6 +374,8 @@ namespace BetterPerformance
             OwnershipTelemetry.Reset();
             OwnershipExpedite.Reset();
             SectorInvalidationFix.Reset();
+            NetworkFlow.Reset();
+            NetworkCompression.Reset();
             ReplicationCadence.Reset();
             ReplicationTelemetry.Reset();
             GuiSoundDeduplication.Reset();
@@ -419,6 +424,8 @@ namespace BetterPerformance
             OwnershipTelemetry.Sample(gauges, labels);
             OwnershipExpedite.Sample(gauges, labels);
             SectorInvalidationFix.Sample(gauges, labels);
+            NetworkFlow.Sample(gauges, labels);
+            NetworkCompression.Sample(gauges, labels);
             ReplicationCadence.Sample(gauges, labels);
             ReplicationTelemetry.Sample(gauges, labels);
             GuiSoundDeduplication.Sample(gauges, labels);
@@ -526,7 +533,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { ActionTelemetry.Finish(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { OwnershipTelemetry.Sample(gauges, labels); OwnershipExpedite.Sample(gauges, labels); SectorInvalidationFix.Sample(gauges, labels); }
+            try { OwnershipTelemetry.Sample(gauges, labels); OwnershipExpedite.Sample(gauges, labels); SectorInvalidationFix.Sample(gauges, labels); NetworkFlow.Sample(gauges, labels); NetworkCompression.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { ReplicationCadence.Sample(gauges, labels); ReplicationTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -581,6 +588,8 @@ namespace BetterPerformance
             OwnershipTelemetry.Uninstall();
             OwnershipExpedite.Uninstall();
             SectorInvalidationFix.Uninstall();
+            NetworkFlow.Uninstall();
+            NetworkCompression.Uninstall();
             ReplicationCadence.Uninstall();
             ReplicationTelemetry.Uninstall();
             GuiSoundDeduplication.Uninstall();

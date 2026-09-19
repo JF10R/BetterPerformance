@@ -27,7 +27,11 @@ internal static class Program
             MinimapCacheStoreTests.Run, BiomeCacheStoreTests.Run,
             PackageCopyTests.Run, ActionTrackerTests.Run, LoadingTimelineTests.Run,
             FrameStepWindowTests.Run, KeyedAggregatorTests.Run, AttributionTargetSplitTests.Run,
-            CloudWriteBufferTests.Run, ResendPolicyTests.Run };
+            CloudWriteBufferTests.Run, ResendPolicyTests.Run,
+            SendWindowControllerTests.TargetFormulaAndClamps, SendWindowControllerTests.BackoffHoldAndRecovery,
+            SendWindowControllerTests.TimeValidationCapacityAndDrain,
+            CompressionFrameTests.RoundTrip, CompressionFrameTests.PassThrough,
+            CompressionFrameTests.RejectsMalformedFrames };
         int failures = 0;
         foreach (var test in tests)
         {

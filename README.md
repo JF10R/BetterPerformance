@@ -2,7 +2,7 @@
 
 Performance diagnostics and experimental, measurable optimizations for Valheim clients and dedicated servers.
 
-**Status: experimental plugin, version 0.4.11, verified against Valheim 1.0.15 (2026-09-18/19). Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
+**Status: experimental plugin, version 0.4.12, verified against Valheim 1.0.15 (2026-09-19). Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
 
 ### TL;DR: what it improves and who benefits
 
@@ -20,6 +20,8 @@ Diagnostics are always on. Each optimization is one switch, off by default, and 
 | Loading: object creation budget and quota | `ObjectLoading.*` | Objects appear more evenly while loading; loot up to 40 % sooner in one test, mixed elsewhere | Your client | No | Measured, workload-dependent |
 | Join and server world load: biome point cache | `BiomeCache.Enabled`, `Mode` | Skips the 4-5 s biome grid generation once an entry has reproduced byte-for-byte; serves nothing before that. |
 | Network: local package copy removal | `NetworkMemory.LocalPackageCopyEnabled` | Fewer memory allocations while replicating; no visible change | Client and server | Indirectly | Measured helper only |
+| Network: adaptive send window and rate policy | `Network.AdaptiveFlowEnabled` | Replaces BetterNetworking's Queue Size and Send Rate: the ZDO send gate follows each peer's measured link instead of a fixed 10 KB (vanilla) or 32-80 KB (menu); the Steam rate is pinned high only on LAN | Client and server (each shapes its own sending) | Yes, the receiver needs nothing | Mechanism verified; runtime measured on the test world only |
+| Network: packet compression | `Network.CompressionEnabled` | Replaces BetterNetworking's compression: framed Deflate to peers on the same plugin version, negotiated per connection | Every peer that should receive compressed data | No, both ends need the plugin; others stay vanilla | Mechanism verified; ratio measured on the test world only |
 | Network: teleport ghost fix | `Replication.SectorInvalidationFixEnabled` | A player who goes through a portal disappears at once on everyone else's screen instead of standing frozen in the portal until they cross another 64 m zone; same for any object that jumps out of a player's area | Server | Yes, no client mod needed | Mechanism verified in the game code; runtime unmeasured |
 
 Nothing here changes world saves, ownership rules, item duplication guards, the wire format or combat outcomes. Details and sources: the roadmap, the 0.4.5 validation and the [game update guide](docs/game-update-guide.md).
@@ -83,6 +85,8 @@ Project documentation only: guides, each optimization module, and each telemetry
 - [GUI group sound and mined-drop placement](docs/gui-sound-and-drop-placement.md)
 - [Dungeon spawn slicing](docs/dungeon-spawn-slicing.md)
 - [Speculative map pre-compression](docs/map-precompression.md)
+- [Network flow: adaptive send window and rate policy](docs/network-flow.md)
+- [Network compression](docs/network-compression.md)
 - [Smelter: catch-up telemetry (and the removed catch-up budget)](docs/smelter-catchup-budget.md)
 - [Terrain: attribution telemetry (and the removed neighbour-save coalescing)](docs/terrain-save-coalescing.md)
 - [Client loading timeline](docs/loading-telemetry.md)
