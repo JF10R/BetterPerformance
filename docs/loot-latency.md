@@ -2,7 +2,7 @@
 
 ### Validation status
 
-Initially implemented with validation deferred, then tested after renewed user authorization. Offline regression checks and a sixteen-window isolated runtime comparison now pass. Budget plus quota reduced mean observed loot availability from 268.57 to 158.73 ms in that headless workload; the incremental priority effect was mixed across blocks. See [0.3.0 results, safety scope and uncertainty](loot-results-2026-09-14.md). The [0.2.0 measurements](object-budget.md) remain historical budget-only results.
+Initially implemented with validation deferred, then tested after renewed user authorization. Offline regression checks and a sixteen-window isolated runtime comparison now pass. Budget plus quota reduced mean observed loot availability from 268.57 to 158.73 ms in that headless workload; the incremental priority effect was mixed across blocks. See 0.3.0 results, safety scope and uncertainty. The [0.2.0 measurements](object-budget.md) remain historical budget-only results.
 
 ### Configuration
 

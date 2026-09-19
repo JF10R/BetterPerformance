@@ -39,3 +39,5 @@ artifacts/
 # OS files
 .DS_Store
 Thumbs.db
+# Session reports, research notes, reviews, validation records, Scout feedback: local only
+notes/

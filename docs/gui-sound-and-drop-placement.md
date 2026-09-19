@@ -2,7 +2,7 @@
 
 Two independent opt-in modules, both default off, added in 0.4.7. Each reproduces a
 decision the vanilla code already makes; neither adds a new behaviour of its own.
-Mechanism and evidence: [drop-placement and GUI-sound research](drop-placement-and-gui-sound-research-2026-09-16.md).
+Mechanism and evidence: drop-placement and GUI-sound research.
 
 ## GUI group-sound deduplication
 
@@ -109,7 +109,10 @@ Gauges `mining_hitpoint_instances_applied`, `mining_hitpoint_instances_restored`
 `mining_hitpoint_instances_seen`, `mining_hitpoint_probe_failures`. Labels
 `mining_hitpoint_status`, `mining_hitpoint_enabled` and `mining_hitpoint_prefabs`.
 `instances_seen` counts every `MineRock5` observed, not only the listed prefabs, so the
-ratio shows how much of the world the list covers.
+ratio shows how much of the world the list covers. Label `mining_hitpoint_seen_prefabs`
+lists up to eight observed `MineRock5` prefab names with the vanilla `m_hitEffectAreaCenter`
+each carried at `Awake`, formatted `name=true;name=false`, which separates a configured name
+that never matched from a prefab that already drops at the hit point.
 
 ### Verification
 

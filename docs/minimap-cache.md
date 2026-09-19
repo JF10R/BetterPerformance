@@ -3,7 +3,7 @@
 Optional, default off. Plugin-owned cache of the three textures `Minimap.GenerateWorldMap`
 produces. It exists because the native minimap cache is write-only on a remote join:
 `ZNet.World.m_worldVersion` is `0` on a joined client, so `TryLoadMinimapTextureData` always
-rejects its own files ([join-cache research](join-cache-research-2026-09-15.md)).
+rejects its own files (join-cache research).
 
 ## Mechanism
 

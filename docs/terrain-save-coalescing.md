@@ -18,8 +18,8 @@ rot. It was removed with its `[Terrain] CoalesceNeighbourSavesEnabled` key, its
 `terrain_batches`/`terrain_saves_*`/`terrain_coalesce_*` counters and its contract test. A
 stale key in a config file is ignored. The game-contract test keeps one two-sided check: if a
 future build brings the per-texel save back, it fails and names the reason. History:
-research in `placement-research-2026-09-17.md`, the 1.0.14 overlap audit and the paint-loss
-fix in `validation-0.4.9.md`.
+the placement research, the 1.0.14 overlap audit and the paint-loss fix in the
+notes kept outside the repository.
 
 ## Attribution telemetry — always on
 

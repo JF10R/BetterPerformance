@@ -26,7 +26,7 @@ The package contains one plugin DLL, documentation, report/comparison scripts, a
 
 ### Install when ready to test
 
-With the game and server stopped, copy `BetterPerformance.dll` into each installation's `BepInEx/plugins/BetterPerformance/` directory. BetterNetworking and ValheimPlus can remain installed for this diagnostics phase; see [validation](validation.md) for tested versions and limitations.
+With the game and server stopped, copy `BetterPerformance.dll` into each installation's `BepInEx/plugins/BetterPerformance/` directory. BetterNetworking and ValheimPlus can remain installed for this diagnostics phase; see validation for tested versions and limitations.
 
 The first launch generates `BepInEx/config/jf10r.BetterPerformance.cfg`. Default behavior:
 

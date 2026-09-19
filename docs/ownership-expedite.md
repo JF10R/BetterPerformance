@@ -15,7 +15,7 @@ prefix/postfix pair on `ZDO.SetOwnerInternal` captures the previous owner and co
 with the applied one. When the new owner is a connected peer that is not the sender, the
 module calls the native `ZDOMan.ForceSendZDO(peerID, id)`.
 
-Mechanism and candidate rationale: [ownership-latency-research-2026-09-15.md](ownership-latency-research-2026-09-15.md).
+Mechanism and candidate rationale: ownership-latency-research-2026-09-15.md.
 
 ## Invariants
 

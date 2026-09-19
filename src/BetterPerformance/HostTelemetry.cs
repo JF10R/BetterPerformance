@@ -2,8 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using BetterPerformance.Core;
+using HarmonyLib;
+using Steamworks;
 
 namespace BetterPerformance
 {
@@ -60,26 +63,170 @@ namespace BetterPerformance
             labels.Add(new TextValue("host_qpc_status", Counter(gauges)));
         }
 
-        // The game's own F2 figures through ZNet.GetNetStats: Steam link quality, ping and
-        // byte rates. A client reports its server link; a server averages quality and ping
-        // and sums bytes over ready peers. The ping is the floor under every network leg
-        // the other probes report (loot arrival, owner grants), so those cannot be read
-        // without it.
+        // Steam link quality, ping and byte rates. A client reads them through
+        // ZNet.GetNetStats, the call behind the game's F2 overlay. A server cannot: the
+        // dedicated build of ZSteamSocket.GetConnectionQuality asks the client interface
+        // SteamNetworkingSockets, which has no game-server context, so every figure
+        // GetNetStats aggregates there is zero. The server path below reads each ready
+        // peer's connection through SteamGameServerNetworkingSockets instead, the same
+        // interface the server build's GetSendQueueSize already uses.
         private static string NetStats(List<NumberValue> gauges)
         {
+            int mark = gauges.Count;
             try
             {
                 var network = ZNet.instance;
                 if (network == null) return "no_world";
-                network.GetNetStats(out float localQuality, out float remoteQuality, out int ping, out float outBytes, out float inBytes);
-                gauges.Add(new NumberValue("host_net_ping_ms", ping, "ms"));
-                gauges.Add(new NumberValue("host_net_out_bytes_per_sec", outBytes, "bytes_per_second"));
-                gauges.Add(new NumberValue("host_net_in_bytes_per_sec", inBytes, "bytes_per_second"));
-                gauges.Add(new NumberValue("host_net_quality_local", localQuality, "ratio"));
-                gauges.Add(new NumberValue("host_net_quality_remote", remoteQuality, "ratio"));
-                return network.IsServer() ? "server_peer_aggregate" : "client_server_link";
+                string? reason = Contract();
+                if (reason != null) { Native(network, gauges); return "native_fallback:" + reason; }
+                if (network.IsServer()) return ServerLinks(network, gauges);
+                Native(network, gauges);
+                PendingBytes(network, false, gauges);
+                return "client_server_link";
             }
-            catch (Exception) { return "unavailable"; }
+            catch (Exception exception)
+            {
+                if (gauges.Count > mark) gauges.RemoveRange(mark, gauges.Count - mark);
+                return "unavailable:" + exception.GetType().Name;
+            }
+        }
+
+        private static void Native(ZNet network, List<NumberValue> gauges)
+        {
+            network.GetNetStats(out float localQuality, out float remoteQuality, out int ping, out float outBytes, out float inBytes);
+            gauges.Add(new NumberValue("host_net_ping_ms", ping, "ms"));
+            gauges.Add(new NumberValue("host_net_out_bytes_per_sec", outBytes, "bytes_per_second"));
+            gauges.Add(new NumberValue("host_net_in_bytes_per_sec", inBytes, "bytes_per_second"));
+            gauges.Add(new NumberValue("host_net_quality_local", localQuality, "ratio"));
+            gauges.Add(new NumberValue("host_net_quality_remote", remoteQuality, "ratio"));
+        }
+
+        // Per-peer figures over the server's ready peers. Ping is averaged as the game
+        // does; the qualities are the minimum, because the worst link is the one that
+        // decides what a player sees; the byte rates are sums; pending bytes is the
+        // per-peer maximum, since ZDOMan.SendZDOs skips a tick for the single peer whose
+        // send queue is over the cap, not for the total across peers.
+        private static string ServerLinks(ZNet network, List<NumberValue> gauges)
+        {
+            var peers = peersRef!(network);
+            bool dedicated = network.IsDedicated();
+            int ready = 0, measured = 0, pingMax = 0;
+            long pingTotal = 0, pendingMax = 0;
+            double outTotal = 0, inTotal = 0;
+            float localMin = 0f, remoteMin = 0f;
+            for (int i = 0; i < peers.Count; i++)
+            {
+                var peer = peers[i];
+                if (peer == null || !peer.IsReady()) continue;
+                ready++;
+                if (!TryRead(peer, dedicated, out SteamNetConnectionRealTimeStatus_t status)) continue;
+                long pending = (long)status.m_cbPendingReliable + status.m_cbPendingUnreliable + status.m_cbSentUnackedReliable;
+                if (measured == 0) { localMin = status.m_flConnectionQualityLocal; remoteMin = status.m_flConnectionQualityRemote; }
+                else
+                {
+                    if (status.m_flConnectionQualityLocal < localMin) localMin = status.m_flConnectionQualityLocal;
+                    if (status.m_flConnectionQualityRemote < remoteMin) remoteMin = status.m_flConnectionQualityRemote;
+                }
+                measured++;
+                pingTotal += status.m_nPing;
+                if (status.m_nPing > pingMax) pingMax = status.m_nPing;
+                outTotal += status.m_flOutBytesPerSec;
+                inTotal += status.m_flInBytesPerSec;
+                if (pending > pendingMax) pendingMax = pending;
+            }
+            gauges.Add(new NumberValue("host_net_peers_ready", ready, "peers"));
+            gauges.Add(new NumberValue("host_net_peers_measured", measured, "peers"));
+            gauges.Add(new NumberValue("host_net_peers_unmeasured", ready - measured, "peers"));
+            if (measured == 0) return ready == 0 ? "server_no_peers" : "server_peers_unmeasured";
+            gauges.Add(new NumberValue("host_net_ping_ms", pingTotal / (double)measured, "ms"));
+            gauges.Add(new NumberValue("host_net_ping_max_ms", pingMax, "ms"));
+            gauges.Add(new NumberValue("host_net_quality_local", localMin, "ratio"));
+            gauges.Add(new NumberValue("host_net_quality_remote", remoteMin, "ratio"));
+            gauges.Add(new NumberValue("host_net_out_bytes_per_sec", outTotal, "bytes_per_second"));
+            gauges.Add(new NumberValue("host_net_in_bytes_per_sec", inTotal, "bytes_per_second"));
+            gauges.Add(new NumberValue("host_net_pending_bytes_max", pendingMax, "bytes"));
+            return "server_per_peer";
+        }
+
+        // A client's own upload congestion against the same cap. Its peer list holds the
+        // server link only, so the maximum is that one connection.
+        private static void PendingBytes(ZNet network, bool dedicated, List<NumberValue> gauges)
+        {
+            var peers = peersRef!(network);
+            long pendingMax = -1;
+            for (int i = 0; i < peers.Count; i++)
+            {
+                var peer = peers[i];
+                if (peer == null || !peer.IsReady()) continue;
+                if (!TryRead(peer, dedicated, out SteamNetConnectionRealTimeStatus_t status)) continue;
+                long pending = (long)status.m_cbPendingReliable + status.m_cbPendingUnreliable + status.m_cbSentUnackedReliable;
+                if (pending > pendingMax) pendingMax = pending;
+            }
+            if (pendingMax >= 0) gauges.Add(new NumberValue("host_net_pending_bytes_max", pendingMax, "bytes"));
+        }
+
+        // A dedicated server holds a game-server Steam context; a listen-server host and a
+        // client hold the ordinary client one. Asking the wrong interface returns a
+        // non-OK EResult, which counts the peer as unmeasured rather than as zero.
+        private static bool TryRead(ZNetPeer peer, bool dedicated, out SteamNetConnectionRealTimeStatus_t status)
+        {
+            status = default(SteamNetConnectionRealTimeStatus_t);
+            var socket = SteamTelemetry.SteamSocket(peer.m_socket);
+            if (socket == null) return false;
+            HSteamNetConnection connection = connectionRef!(socket);
+            var lane = default(SteamNetConnectionRealTimeLaneStatus_t);
+            EResult response = dedicated
+                ? SteamGameServerNetworkingSockets.GetConnectionRealTimeStatus(connection, ref status, 0, ref lane)
+                : SteamNetworkingSockets.GetConnectionRealTimeStatus(connection, ref status, 0, ref lane);
+            return response == EResult.k_EResultOK;
+        }
+
+        private static bool contractChecked;
+        private static string? contractReason;
+        private static AccessTools.FieldRef<ZNet, List<ZNetPeer>>? peersRef;
+        private static AccessTools.FieldRef<ZSteamSocket, HSteamNetConnection>? connectionRef;
+
+        // Checked once. A missing field or a changed Steam signature falls back to the
+        // native call rather than throwing every interval.
+        private static string? Contract()
+        {
+            if (contractChecked) return contractReason;
+            contractChecked = true;
+            contractReason = Resolve();
+            return contractReason;
+        }
+
+        private static string? Resolve()
+        {
+            try
+            {
+                var peers = AccessTools.Field(typeof(ZNet), "m_peers");
+                if (peers == null || peers.IsStatic || peers.FieldType != typeof(List<ZNetPeer>)) return "znet_m_peers";
+                var connection = AccessTools.Field(typeof(ZSteamSocket), "m_con");
+                if (connection == null || connection.IsStatic || connection.FieldType != typeof(HSteamNetConnection)) return "zsteamsocket_m_con";
+                var socket = AccessTools.Field(typeof(ZNetPeer), "m_socket");
+                if (socket == null || socket.IsStatic || socket.FieldType != typeof(ISocket)) return "znetpeer_m_socket";
+                if (!HasRealTimeStatus(typeof(SteamNetworkingSockets))) return "steam_client_api";
+                if (!HasRealTimeStatus(typeof(SteamGameServerNetworkingSockets))) return "steam_gameserver_api";
+                peersRef = AccessTools.FieldRefAccess<ZNet, List<ZNetPeer>>("m_peers");
+                connectionRef = AccessTools.FieldRefAccess<ZSteamSocket, HSteamNetConnection>("m_con");
+                return null;
+            }
+            catch (Exception exception) { return exception.GetType().Name; }
+        }
+
+        internal static bool HasRealTimeStatus(Type declaring)
+        {
+            var method = declaring.GetMethod("GetConnectionRealTimeStatus",
+                BindingFlags.Public | BindingFlags.Static, null,
+                new[]
+                {
+                    typeof(HSteamNetConnection),
+                    typeof(SteamNetConnectionRealTimeStatus_t).MakeByRefType(),
+                    typeof(int),
+                    typeof(SteamNetConnectionRealTimeLaneStatus_t).MakeByRefType()
+                }, null);
+            return method != null && method.ReturnType == typeof(EResult);
         }
 
         // Resolution is reported in 100ns units. The "minimum" value is the coarsest

@@ -920,11 +920,16 @@ def host_network_report(records):
     start_pair = (named(start.get('gauges', [])), named(start.get('labels', [])))
     all_windows = [start_pair] + windows
     text_names = ('process_priority_class', 'process_affinity_mask', 'power_scheme',
-                  'online_backend', 'steam_transport_path', 'steam_relay_pop')
+                  'online_backend', 'steam_transport_path', 'steam_relay_pop', 'host_net_status')
     texts = [(name, label_values(all_windows, name)) for name in text_names]
     texts = [(name, values) for name, values in texts if values]
     gauge_names = ('host_timer_resolution_current_ms', 'steam_connections_relayed', 'steam_connections_direct',
-                   'peer_sockets_steam', 'peer_sockets_playfab', 'peer_sockets_other')
+                   'peer_sockets_steam', 'peer_sockets_playfab', 'peer_sockets_other',
+                   # 0.4.10/0.4.11 Steam link figures: a client reports its server link, a server reads each
+                   # ready peer through the game-server API (the native aggregate returned zeros there).
+                   'host_net_ping_ms', 'host_net_ping_max_ms', 'host_net_quality_local', 'host_net_quality_remote',
+                   'host_net_in_bytes_per_sec', 'host_net_out_bytes_per_sec', 'host_net_pending_bytes_max',
+                   'host_net_peers_ready', 'host_net_peers_measured', 'host_net_peers_unmeasured')
     spans = [(name, extent(all_windows, name)) for name in gauge_names]
     spans = [(name, span) for name, span in spans if span is not None]
     clock = [(record.get('utc', 'unknown'), named(record.get('gauges', []))['host_qpc_timestamp'])
@@ -945,7 +950,9 @@ def host_network_report(records):
         output += ['| Signal | Minimum | Maximum |', '| --- | ---: | ---: |']
         output += [f'| {cell(name)} | {low:g} | {high:g} |' for name, (low, high) in spans]
         output += ['', 'Connection and socket counts are occupancy at poll time; a maximum is not a total of '
-                   'distinct peers over the capture.', '']
+                   'distinct peers over the capture. `host_net_pending_bytes_max` above the send-queue cap '
+                   '(10240 bytes native, 32 KB with BetterNetworking) means `ZDOMan.SendZDOs` skipped ticks for '
+                   'that peer; a server reports the worst peer, a client its own server link.', '']
     if frequency:
         output += [f'QPC frequency: {exact(frequency[0])}'
                    + (f'–{exact(frequency[1])} (inconsistent readings)' if frequency[1] != frequency[0] else '')

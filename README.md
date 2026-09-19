@@ -2,7 +2,7 @@
 
 Performance diagnostics and experimental, measurable optimizations for Valheim clients and dedicated servers.
 
-**Status: experimental plugin, version 0.4.10, verified against Valheim 1.0.15 (2026-09-18). Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
+**Status: experimental plugin, version 0.4.11, verified against Valheim 1.0.15 (2026-09-18/19). Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
 
 ### TL;DR: what it improves and who benefits
 
@@ -20,8 +20,9 @@ Diagnostics are always on. Each optimization is one switch, off by default, and 
 | Loading: object creation budget and quota | `ObjectLoading.*` | Objects appear more evenly while loading; loot up to 40 % sooner in one test, mixed elsewhere | Your client | No | Measured, workload-dependent |
 | Join and server world load: biome point cache | `BiomeCache.Enabled`, `Mode` | Skips the 4-5 s biome grid generation once an entry has reproduced byte-for-byte; serves nothing before that. |
 | Network: local package copy removal | `NetworkMemory.LocalPackageCopyEnabled` | Fewer memory allocations while replicating; no visible change | Client and server | Indirectly | Measured helper only |
+| Network: teleport ghost fix | `Replication.SectorInvalidationFixEnabled` | A player who goes through a portal disappears at once on everyone else's screen instead of standing frozen in the portal until they cross another 64 m zone; same for any object that jumps out of a player's area | Server | Yes, no client mod needed | Mechanism verified in the game code; runtime unmeasured |
 
-Nothing here changes world saves, ownership rules, item duplication guards, the wire format or combat outcomes. Details and sources: the [roadmap](docs/improvement-roadmap-2026-09-15.md), the [0.4.5 validation](docs/validation-0.4.5.md) and the [game update guide](docs/game-update-guide.md).
+Nothing here changes world saves, ownership rules, item duplication guards, the wire format or combat outcomes. Details and sources: the roadmap, the 0.4.5 validation and the [game update guide](docs/game-update-guide.md).
 
 The initial focus is measuring a client and dedicated server running on the same computer. The goal is to distinguish simulation stalls, object-loading delays, save pauses, and network backlogs before changing game behavior.
 
@@ -39,7 +40,7 @@ The initial focus is measuring a client and dedicated server running on the same
 - Bounded local graphics configuration history, with distinct player preferences, active settings and synchronized simulation distances.
 - Object-budget tradeoffs, aggregate AI/pathfinding/spawn observations and Windows main-thread CPU accounting.
 - Private/Unity memory, optional sparse render timings, bounded local action outcomes and finer replication/character bottleneck stages.
-- Passive client loading timelines and inclusive world-generation/terrain stages; distinguish observed wall loading from native game-time spawn messages. See [loading telemetry](docs/loading-telemetry.md), [loading research](docs/loading-research-0.4.1.md) and the [data-safety audit](docs/data-safety-audit-0.4.1.md).
+- Passive client loading timelines and inclusive world-generation/terrain stages; distinguish observed wall loading from native game-time spawn messages. See [loading telemetry](docs/loading-telemetry.md), loading research and the data-safety audit.
 - Base-simulation, terrain and generation timings (structural wear/support, heightmap rebuilds, terrain operations, crop/station ticks, location and dungeon spawns) with population counts; see [base simulation telemetry](docs/base-simulation-telemetry.md).
 - Per-name attribution of object creation cost, serialized replication bytes and routed RPC dispatch, bounded top-N per export; see [attribution telemetry](docs/attribution-telemetry.md).
 - Unity engine markers and counters through `ProfilerRecorder` (present/render-thread waits, GC pauses, frame times, draw calls), fixed-step accounting and GC mode; see [engine telemetry](docs/engine-telemetry.md).
@@ -50,7 +51,7 @@ The first two-process capture cannot establish what a remote client is doing. Me
 
 ### Object loading
 
-An optional soft time budget spreads scene object creation across frames, with a quota that lets more objects through while time remains, a preparation clock that gives creation its allowance after the near scan/sort, and the separate initial-loading acceleration. Readiness checks, invalid-prefab handling, view distance and save/network formats are unchanged. In the 2026-09-15 session the budget yielded in 1.2 % of creation batches: it only binds on the heavy batches (loading, zone crossings), which are the ones that cause hitches, so its value is measured on those events, not on average frames. Guides: [object budget](docs/object-budget.md), [preparation clock](docs/budget-preparation.md), [initial loading](docs/initial-loading.md), [loot scheduling](docs/loot-latency.md) and the [0.3.0 measurements](docs/loot-results-2026-09-14.md).
+An optional soft time budget spreads scene object creation across frames, with a quota that lets more objects through while time remains, a preparation clock that gives creation its allowance after the near scan/sort, and the separate initial-loading acceleration. Readiness checks, invalid-prefab handling, view distance and save/network formats are unchanged. In the 2026-09-15 session the budget yielded in 1.2 % of creation batches: it only binds on the heavy batches (loading, zone crossings), which are the ones that cause hitches, so its value is measured on those events, not on average frames. Guides: [object budget](docs/object-budget.md), [preparation clock](docs/budget-preparation.md), [initial loading](docs/initial-loading.md), [loot scheduling](docs/loot-latency.md) and the 0.3.0 measurements.
 
 ### Relationship to other mods
 
@@ -60,55 +61,42 @@ The diagnostics phase is intended to coexist with BetterNetworking. Queue measur
 
 ### Documentation
 
-- [Base simulation, terrain and generation telemetry](docs/base-simulation-telemetry.md)
-- [Attribution by prefab and RPC name](docs/attribution-telemetry.md)
-- [Engine markers and counters](docs/engine-telemetry.md)
-- [Host facts, Steam transport path and ownership counters](docs/host-network-telemetry.md)
-- [Report sections added in 0.4.4](docs/report-sections-0.4.4.md)
-- [Diagnostics validation 0.4.4: offline gates and isolated runtime session](docs/diagnostics-validation-0.4.4.md)
-- [Validation 0.4.5: gates, isolated session and what the next session must confirm](docs/validation-0.4.5.md)
-- [Validation 0.4.6: gameplay probes and counters](docs/validation-0.4.6.md)
-- [Play session 2026-09-15: executive report](docs/session-report-2026-09-15.md)
-- [Improvement roadmap after the 2026-09-15 session](docs/improvement-roadmap-2026-09-15.md)
-- [Research: character save and Steam Cloud](docs/character-save-research-2026-09-15.md), [join caches](docs/join-cache-research-2026-09-15.md), [replication of fish, birds and animals](docs/replication-research-2026-09-15.md), [ownership and second-player latency](docs/ownership-latency-research-2026-09-15.md), [terrain regeneration](docs/terrain-regeneration-research-2026-09-15.md), [server, ValheimPlus map sync and host freeze](docs/server-host-research-2026-09-15.md)
-- [Steam Cloud write buffer sizing](docs/cloud-write-optimization.md)
-- [Minimap texture cache with shadow verification](docs/minimap-cache.md)
-- [Replication cadence and bird velocity](docs/replication-cadence.md)
-- [Server owner-grant expedite](docs/ownership-expedite.md)
-- [GUI group sound and mined-drop placement](docs/gui-sound-and-drop-placement.md)
-- [Smelter catch-up budget](docs/smelter-catchup-budget.md), [dungeon spawn slicing](docs/dungeon-spawn-slicing.md), [speculative map pre-compression](docs/map-precompression.md)
-- [Play session 2026-09-16: executive report](docs/session-report-2026-09-16.md) and the 2026-09-17 research: [clutter](docs/clutter-research-2026-09-17.md), [station catch-up](docs/station-catchup-research-2026-09-17.md), [build-mode placement](docs/placement-research-2026-09-17.md), [ownership release](docs/ownership-release-research-2026-09-17.md), [save pre-compression](docs/save-precompression-research-2026-09-17.md), [dungeon spawn](docs/dungeon-spawn-research-2026-09-17.md)
-- [Gameplay-loop timing probes](docs/gameplay-telemetry.md) and [gameplay counters](docs/gameplay-counters.md)
-- [Research: shared chest for two players in ValheimPlus](docs/shared-chest-research-2026-09-15.md)
-- [Initial loading acceleration: enable, disable and measure](docs/initial-loading.md)
-- [Why Valheim joining can take 30+ seconds: research reference](docs/valheim-loading-time-analysis.md)
-- [Fast-loading experiments and 0.4.2 diagnostics](docs/fast-join-results-0.4.2.md)
-- [Native biome cache findings and safe reuse constraints](docs/native-biome-cache-research.md)
-- [Frontier loading research](docs/fast-loading-frontier-2026-09-15.md)
-- [Real-session profile, slow operations and loot diagnostics](docs/play-session.md)
-- [Mined-loot visibility latency](docs/loot-visibility-latency-2026-09-17.md)
-- [Biome point cache](docs/biome-point-cache.md) and its [research](docs/biome-generation-research-2026-09-18.md)
-- [Configuration history and diagnostic interpretation](docs/configuration-history.md)
-- [Frontier research and next experiments](docs/frontier-research-2026-09-15.md)
-- [0.4.0 feature disposition and implementation](docs/frontier-implementation-0.4.0.md)
-- [0.4.0 runtime results and installed profile](docs/frontier-runtime-0.4.0.md)
-- [CPU, RAM and bounded worker research](docs/cpu-memory-parallelism-2026-09-15.md)
-- [Local package-copy optimization](docs/local-package-copy.md)
-- [Local action outcome measurements](docs/action-telemetry.md)
-- [Map serialization and runtime validation](docs/frontier-runtime-2026-09-15.md)
-- [Object-budget tradeoff measurements](docs/budget-telemetry.md)
-- [AI and spawning telemetry](docs/ai-telemetry.md)
-- [Main-thread CPU accounting](docs/thread-cpu-telemetry.md)
-- [Logging cost reduction and offline measurements](docs/logging-overhead-2026-09-14.md)
-- [Measurement scope and interpretation](docs/measurements.md)
-- [Build, installation and capture guide](docs/capture-guide.md)
+Project documentation only: guides, each optimization module, and each telemetry family. Session reports, research notes, reviews and validation records are kept outside the repository.
+
+- [Capture guide](docs/capture-guide.md)
+- [Real-session diagnostics](docs/play-session.md)
+- [Measurement scope](docs/measurements.md)
+- [Configuration history and diagnostic interpretation — 0.3.3](docs/configuration-history.md)
+- [Repeated-test protocol](docs/repeated-tests.md)
 - [Updating the plugin after a Valheim update](docs/game-update-guide.md)
-- [Validation results and remaining checks](docs/validation.md)
-- [Repeated-test protocol and uncertainty](docs/repeated-tests.md)
-- [Runtime results, including possible overhead](docs/runtime-results-2026-09-14.md)
-- [Implemented changes](CHANGELOG.md)
-- [Development rules](AGENTS.md)
-- [License](LICENSE)
+- [Experimental object-creation budget](docs/object-budget.md)
+- [Creation allowance after near preparation](docs/budget-preparation.md)
+- [Experimental initial loading acceleration](docs/initial-loading.md)
+- [Experimental loot scheduling — 0.3.0](docs/loot-latency.md)
+- [Minimap texture cache](docs/minimap-cache.md)
+- [Biome point cache](docs/biome-point-cache.md)
+- [Steam cloud write buffer](docs/cloud-write-optimization.md)
+- [Local ZDO package copy](docs/local-package-copy.md)
+- [Replication cadence](docs/replication-cadence.md)
+- [Owner-grant expedite (server side)](docs/ownership-expedite.md)
+- [Sector invalidation after a position write](docs/sector-invalidation-fix.md)
+- [GUI group sound and mined-drop placement](docs/gui-sound-and-drop-placement.md)
+- [Dungeon spawn slicing](docs/dungeon-spawn-slicing.md)
+- [Speculative map pre-compression](docs/map-precompression.md)
+- [Smelter: catch-up telemetry (and the removed catch-up budget)](docs/smelter-catchup-budget.md)
+- [Terrain: attribution telemetry (and the removed neighbour-save coalescing)](docs/terrain-save-coalescing.md)
+- [Client loading timeline](docs/loading-telemetry.md)
+- [Mined-loot visibility latency — measurement plan, 2026-09-17](docs/loot-visibility-latency-2026-09-17.md)
+- [Local pickup and container outcomes](docs/action-telemetry.md)
+- [Attribution telemetry](docs/attribution-telemetry.md)
+- [Base simulation, terrain and generation observations](docs/base-simulation-telemetry.md)
+- [Budget tradeoff observations](docs/budget-telemetry.md)
+- [Engine markers and counters](docs/engine-telemetry.md)
+- [Gameplay-loop observations](docs/gameplay-telemetry.md)
+- [Gameplay counters](docs/gameplay-counters.md)
+- [Host and network path telemetry](docs/host-network-telemetry.md)
+- [AI cadence, pathfinding and spawn observations](docs/ai-telemetry.md)
+- [Main-thread CPU observation](docs/thread-cpu-telemetry.md)
 
 ### Development
 

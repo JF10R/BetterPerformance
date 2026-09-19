@@ -24,6 +24,8 @@ namespace BetterPerformance
         // Constructor/Clear patches can retain or expose the otherwise local source,
         // invalidating exclusive ownership even when serialization itself is native.
         private static readonly MethodBase[] ConflictMethods = { WritePackage, GetArray, SerializeZdo, ClearPackage, PackageConstructor };
+        private static readonly string OwnOwnerPrefix = Plugin.PluginId + ".";
+        private static volatile string conflictOwner = "none";
         private static AccessTools.FieldRef<ZPackage, BinaryWriter>? writer;
         private static AccessTools.FieldRef<ZPackage, MemoryStream>? stream;
         [ThreadStatic] private static bool scopeAllowed;
@@ -91,9 +93,11 @@ namespace BetterPerformance
             if (!Enabled || writer == null || stream == null) return;
             // Once per send operation, not once per serialized ZDO. Late method patches
             // conservatively restore the original Write/GetArray semantics.
-            if (ConflictMethods.Any(method => Harmony.GetPatchInfo(method)?.Owners.Count > 0))
+            string? foreign = ForeignOwner();
+            if (foreign != null)
             {
                 Interlocked.Increment(ref conflictScopes);
+                conflictOwner = foreign;
                 Status = "native_due_to_method_patch";
                 return;
             }
@@ -101,6 +105,24 @@ namespace BetterPerformance
         }
 
         private static void AfterSend(ScopeState __state) { scopeAllowed = __state.Previous; }
+
+        // Patches this plugin owns are exempt. Every plugin-owned patch on these members is
+        // count/size-only: it reads a length into a per-call __state and retains no package,
+        // buffer or reference, and any new one must keep that property. A foreign owner on any
+        // of them still disables the fast path, and its id is exported for attribution.
+        private static string? ForeignOwner()
+        {
+            foreach (var method in ConflictMethods)
+            {
+                if (method == null) continue;
+                var owners = Harmony.GetPatchInfo(method)?.Owners;
+                if (owners == null) continue;
+                foreach (var owner in owners)
+                    if (owner != Plugin.PluginId && !owner.StartsWith(OwnOwnerPrefix, StringComparison.Ordinal))
+                        return owner;
+            }
+            return null;
+        }
 
         private static void CopyLocalPackage(ZPackage destination, ZPackage source)
         {
@@ -173,6 +195,7 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("package_local_copy_conflict_scopes_total", Interlocked.Read(ref conflictScopes), "calls"));
             labels.Add(new TextValue("package_local_copy_status", Status));
             labels.Add(new TextValue("package_local_copy_enabled", Enabled ? "true" : "false"));
+            labels.Add(new TextValue("package_local_copy_conflict_owner", conflictOwner));
         }
 
         internal static void Uninstall()
@@ -181,6 +204,7 @@ namespace BetterPerformance
             Patches.UnpatchSelf();
             Installed = false;
             Status = "disabled";
+            conflictOwner = "none";
         }
     }
 }

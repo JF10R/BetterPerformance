@@ -99,6 +99,6 @@ and persistence code are not modified by this module.
 
 The preceding QA prototype improved two headless comparisons by 4.2–5.5 seconds;
 this is not a guarantee for a graphical client or another world. See the
-[prototype results](fast-join-results-0.4.2.md),
-[native loading reference](valheim-loading-time-analysis.md) and
-[0.4.3 validation](initial-loading-validation-0.4.3.md).
+prototype results,
+native loading reference and
+0.4.3 validation.

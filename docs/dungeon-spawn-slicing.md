@@ -3,7 +3,7 @@
 One opt-in client module, default off. It spreads the dungeon room spawn across frames
 instead of placing every room in a single frame. It changes no layout, no ZDO and no
 network state: it replays the calls the native loop already makes, in the same order.
-Mechanism and evidence: [dungeon spawn research](dungeon-spawn-research-2026-09-17.md).
+Mechanism and evidence: dungeon spawn research.
 
 ## Mechanism
 

@@ -2,7 +2,7 @@
 
 Two opt-in changes to the replication send path, both default off, plus always-on
 observation of it. Nothing here is measured in a running game yet. Mechanism and evidence:
-`docs/replication-research-2026-09-15.md`.
+the research notes, kept outside the repository.
 
 ## Configuration
 

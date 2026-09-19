@@ -65,13 +65,20 @@ internal static class LootVisibilityGameTests
         Check(viewAwake.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Resolve() == createPublic),
             "ZNetView.Awake still creates its ZDO through the public overload, never the private one");
 
-        // 3. t2: local creation of the object, and the accessors the hook reads.
+        // 3. t2: scene registration of the object, which is the one point both a network
+        //    creation and this process's own Instantiate pass through, and the accessors the
+        //    hook reads. Asserted from both sides: the method's shape, and ZNetView.Awake
+        //    still calling it, so a build that stops calling it fails here.
         TypeDefinition netScene = gameModule.GetType("ZNetScene")!;
-        MethodDefinition createObject = netScene.Methods.SingleOrDefault(m => m.Name == "CreateObject" &&
-            m.Parameters.Count == 1 && m.Parameters[0].ParameterType.FullName == "ZDO")
-            ?? throw new InvalidOperationException("Loot visibility: ZNetScene.CreateObject(ZDO) is missing.");
-        Check(!createObject.IsStatic && createObject.ReturnType.FullName == "UnityEngine.GameObject",
-            "ZNetScene.CreateObject(ZDO) is an instance method returning a GameObject");
+        MethodDefinition addInstance = netScene.Methods.SingleOrDefault(m => m.Name == "AddInstance" &&
+            m.Parameters.Select(p => p.ParameterType.FullName).SequenceEqual(new[] { "ZDO", "ZNetView" }))
+            ?? throw new InvalidOperationException("Loot visibility: ZNetScene.AddInstance(ZDO, ZNetView) is missing.");
+        Check(!addInstance.IsStatic && addInstance.IsPublic && addInstance.ReturnType.FullName == "System.Void",
+            "ZNetScene.AddInstance(ZDO, ZNetView) is a public instance void method");
+        Check(viewAwake.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Resolve() == addInstance),
+            "ZNetView.Awake still registers every view through ZNetScene.AddInstance, local creation included");
+        Check(netView.BaseType?.FullName == "UnityEngine.MonoBehaviour",
+            "ZNetView is still a MonoBehaviour, which supplies the gameObject and GetComponent the hook reads");
         TypeDefinition zdo = gameModule.GetType("ZDO")!;
         foreach (var (name, returns) in new[] { ("GetPosition", "UnityEngine.Vector3"), ("IsOwner", "System.Boolean"), ("GetPrefab", "System.Int32") })
             Check(zdo.Methods.Any(m => m.Name == name && m.Parameters.Count == 0 && m.ReturnType.FullName == returns),
@@ -109,7 +116,7 @@ internal static class LootVisibilityGameTests
         {
             ("AfterSetAreaHealth", new[] { "MineRock5", "System.Single" }),
             ("AfterCreateNewZDO", new[] { "ZDOID", "UnityEngine.Vector3", "System.Int32" }),
-            ("AfterCreateObject", new[] { "ZDO", "UnityEngine.GameObject" }),
+            ("AfterAddInstance", new[] { "ZDO", "ZNetView" }),
             ("BeforeDestroy", new[] { "UnityEngine.GameObject" }),
             ("BeforeZdoDestroyed", new[] { "ZNetScene", "ZDO" }),
         })

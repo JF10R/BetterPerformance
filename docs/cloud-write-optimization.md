@@ -5,7 +5,7 @@
 `Splatform.Steam.SteamCloud.WriteFile` allocates `new byte[104857600]` as a scratch chunk
 buffer on every cloud file write, whatever the payload. One character save performs three
 cloud writes, so it allocates and zeroes about 300 MiB for a ~40 KB profile. Details and
-the measured save window are in `docs/character-save-research-2026-09-15.md`.
+the measured save window are in the research notes, kept outside the repository.
 
 ## What changes
 

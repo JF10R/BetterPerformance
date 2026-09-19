@@ -10,6 +10,7 @@
 ### Repository hygiene
 
 - Never commit game assemblies, decompiled game sources, worlds, secrets, or raw captures.
+- `docs/` holds project documentation only: guides, one page per optimization module, one per telemetry family. Session reports, research notes, reviews, validation records and Scout feedback go to `notes/` (excluded from git, `.git/info/exclude`); the CHANGELOG carries what the public needs from them.
 - Reference game dependencies locally; do not bundle them for distribution.
 - Preserve upstream licenses and attribution when importing third-party code.
 - Use Scout for code discovery when available; use raw search when unavailable or insufficient. Do not use Graphify unless requested.
@@ -25,6 +26,9 @@
 - A game update can supersede a module outright (1.0.15 removed the per-texel terrain save this plugin coalesced). The module's own `Verify` must refuse the new shape, and the contract test must assert both shapes strictly rather than widen one.
 - An agent's report is a lead, not evidence: re-derive any claim before acting on it (signature, call sites, config value). Every wrong claim caught this week was caught that way.
 - The user judges modules on absolute numbers from ordinary play, never on A/B or baseline sessions. Do not propose one.
+- A deferral is only equivalent when the deferred work would have happened anyway. The smelter budget carried idle catch-up seconds that vanilla discards (`continue` on an empty station), so an empty smelter banked its whole absence and smelted later ore at 8x. Before bounding a native loop, list what the loop throws away and prove the bound throws the same.
+- A gauge that reads zero for two sessions must be proven reachable. `loot_visibility_arrival_missing` and `destroyed_rock` were structurally zero (t2 sat on a path only network ZDOs take; the rock hook never counted) and the validation doc called them "unproven" instead of wrong. An isolated run must exercise every counter once, or the module must self-test the path.
+- The dedicated-server build is a different assembly: `ZSteamSocket.GetConnectionQuality` calls the client Steam API there, so a "works on the client" native figure can be all zeros on the server. Check the archived server decompile for every native call a server-side gauge relies on.
 
 ### Verification
 

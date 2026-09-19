@@ -2,7 +2,7 @@
 
 BetterPerformance 0.3.3 records ordinary gameplay without the QA harness. Its diagnostics do not spawn test objects, move characters, force saves, enable cheats or change achievement state. No QA plugin is required. Other installed mods retain their own behavior.
 
-The installed client additionally enables `MapSaving.Enabled` after isolated native-payload/reload validation; the dedicated server leaves this client-save optimization disabled. Both use the same updated DLL. Graphics changes, save/RPC stages, object-budget tradeoffs, AI/path/spawn observations and Windows main-thread CPU accounting are included automatically. See the [runtime results and deployment](frontier-runtime-2026-09-15.md) for measured gains, cost and limitations.
+The installed client additionally enables `MapSaving.Enabled` after isolated native-payload/reload validation; the dedicated server leaves this client-save optimization disabled. Both use the same updated DLL. Graphics changes, save/RPC stages, object-budget tradeoffs, AI/path/spawn observations and Windows main-thread CPU accounting are included automatically. See the runtime results and deployment for measured gains, cost and limitations.
 
 ### Prepared client and server profile
 
@@ -30,7 +30,7 @@ SlowLoopMilliseconds = 100
 SlowSaveWorkerMilliseconds = 250
 ```
 
-The client additionally uses `ObjectLoading.Enabled=true`, `BudgetMilliseconds=4`, `AdaptiveCreationQuota=true`, and `ExpandedCreationQuota=64`. `PrioritizeNearbyLoot=false` remains explicit. The dedicated server uses `ObjectLoading.Enabled=false` and `AdaptiveCreationQuota=false`; its diagnostics remain active. These choices follow the [0.3.0 comparison](loot-results-2026-09-14.md), which did not establish a direct server benefit or a consistent incremental priority benefit.
+The client additionally uses `ObjectLoading.Enabled=true`, `BudgetMilliseconds=4`, `AdaptiveCreationQuota=true`, and `ExpandedCreationQuota=64`. `PrioritizeNearbyLoot=false` remains explicit. The dedicated server uses `ObjectLoading.Enabled=false` and `AdaptiveCreationQuota=false`; its diagnostics remain active. These choices follow the 0.3.0 comparison, which did not establish a direct server benefit or a consistent incremental priority benefit.
 
 BetterNetworking and ValheimPlus remain separate. BetterPerformance does not duplicate BetterNetworking's transport patches. The other player's client does not need BetterPerformance for these local captures; measuring that computer's frame or local loot-creation behavior would require installing it there too.
 

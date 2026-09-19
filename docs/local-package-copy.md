@@ -17,7 +17,7 @@ Local inspection evidence is retained privately in `.qa/package-copy-callers-il.
 
 The transpiler requires exactly one matching copy call, the two verified local constructors, the exact local operands and no other source-local uses. Only that call instruction changes; all other instructions, labels, exception regions, scheduling and native serialization remain present.
 
-This is a synchronous, exclusively owned package operation, not a general thread-safe replacement for `GetArray`. The implementation never retains a source buffer after the call. Concurrent mutation of a source package, or another mod retaining the local serialization package for asynchronous use, is outside the supported contract. Known Harmony patches to `Write(ZPackage)`, `GetArray`, or `ZDO.Serialize` force native behavior at the beginning of each send operation, including patches installed after this module. Arbitrary runtime method replacement during an active send cannot be made safe by this scope check.
+This is a synchronous, exclusively owned package operation, not a general thread-safe replacement for `GetArray`. The implementation never retains a source buffer after the call. Concurrent mutation of a source package, or another mod retaining the local serialization package for asynchronous use, is outside the supported contract. Known *foreign* Harmony patches to `Write(ZPackage)`, `GetArray`, or `ZDO.Serialize` force native behavior at the beginning of each send operation, including patches installed after this module. Patches this plugin owns are exempt, because each is count/size-only: it reads a length into a per-call `__state` and retains no package, buffer or reference, and any new one must keep that property. Arbitrary runtime method replacement during an active send cannot be made safe by this scope check.
 
 ## Fallbacks and failures
 
@@ -39,7 +39,11 @@ The helper allocates no payload buffer and retains none. The destination still p
 | `avoided_payload_bytes_total` | Sum of successfully copied logical payload lengths; estimated intermediate array payload allocation avoided, excluding headers/alignment |
 | `fallback_calls_total` | Calls delegated to the original package writer, including disabled/conflicting/unsupported cases |
 | `failed_calls_total` | Exceptions escaping either the fast or native path; overlaps attempted/fallback counts |
-| `conflict_scopes_total` | Send operations that used native writes because a relevant method was patched |
+| `conflict_scopes_total` | Send operations that used native writes because a foreign patch sits on a relevant method |
+
+Label `package_local_copy_conflict_owner` names the first foreign Harmony owner seen, or `none`, so a future conflict is attributable without a code read.
+
+From 0.4.4 to 0.4.10 the module disabled itself against its own plugin: `AttributionTelemetry` patches `ZDO.Serialize`, and the conflict check counted any owner. The whole 4.5 h session of 2026-09-17 read `native_due_to_method_patch` on both roles, 0 fast calls against 3.7 M fallbacks. Since 0.4.11 owners equal to `jf10r.BetterPerformance` or prefixed with it are ignored.
 
 Zero-length writes count as calls but contribute zero avoided payload bytes. These counters contain no package contents, peer IDs, world names or character data. Status labels describe installation/conflict state and the current enable gate. The last conflict status may persist after a conflicting patch is removed; counters are the quantitative record.
 

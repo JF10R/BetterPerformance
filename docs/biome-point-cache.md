@@ -2,7 +2,7 @@
 
 Opt-in, default off: `[BiomeCache] Enabled`, `Mode` (`shadow` | `verified`), `MaxEntryMiB` (32),
 `MaxDirectoryMiB` (128). Requires a restart. Applies to a client join and to a dedicated
-server's world load alike. Research: [biome-generation-research-2026-09-18.md](biome-generation-research-2026-09-18.md).
+server's world load alike. Research: biome-generation-research-2026-09-18.md.
 
 ## Why
 

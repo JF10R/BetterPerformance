@@ -13,7 +13,9 @@ namespace BetterPerformance
     // Read-only sampled observation of the delay between a mined chunk disappearing and
     // its loot becoming visible on this client. Three timestamps on one process's clock:
     // the hit area is observed destroyed (t0), the item ZDO first arrives from the network
-    // (t1), the item GameObject is created locally (t2). Cross-process Stopwatch origins
+    // (t1), the item GameObject is registered in the scene (t2, ZNetScene.AddInstance, which
+    // ZNetView.Awake calls for local instantiation and network creation alike, so a drop
+    // this process makes itself is observed too). Cross-process Stopwatch origins
     // are offset on this runtime, so no server clock enters any of these durations.
     // Attribution is by position and time, never by identity: the game does not link a
     // destroyed hit area to the items it dropped.
@@ -57,14 +59,14 @@ namespace BetterPerformance
             if (Dedicated()) { Status = "dedicated-server"; return; }
             try
             {
-                var (areaHealth, createZdo, createObject, destroy, zdoDestroyed) = ValidateContracts();
+                var (areaHealth, createZdo, addInstance, destroy, zdoDestroyed) = ValidateContracts();
                 installedRadius = Math.Max(2, Math.Min(32, radius.Value));
                 installedWindowMs = Math.Max(1, Math.Min(15, windowSeconds.Value)) * 1000.0;
                 tracker = new LootVisibilityTracker<ZDOID>(DestructionCapacity, ArrivalCapacity,
                     installedRadius, installedWindowMs);
                 Patches.Patch(areaHealth, postfix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(AfterSetAreaHealth)));
                 Patches.Patch(createZdo, postfix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(AfterCreateNewZDO)));
-                Patches.Patch(createObject, postfix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(AfterCreateObject)));
+                Patches.Patch(addInstance, postfix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(AfterAddInstance)));
                 Patches.Patch(destroy, prefix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(BeforeDestroy)));
                 Patches.Patch(zdoDestroyed, prefix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(BeforeZdoDestroyed)));
                 Installed = Enabled = true;
@@ -85,7 +87,7 @@ namespace BetterPerformance
         // hooks once a world exists; a dedicated server then unpatches instead of sampling.
         private static bool Dedicated() => !ReferenceEquals(ZNet.instance, null) && ZNet.instance.IsDedicated();
 
-        private static (MethodInfo AreaHealth, MethodInfo CreateZdo, MethodInfo CreateObject, MethodInfo Destroy, MethodInfo ZdoDestroyed) ValidateContracts()
+        private static (MethodInfo AreaHealth, MethodInfo CreateZdo, MethodInfo AddInstance, MethodInfo Destroy, MethodInfo ZdoDestroyed) ValidateContracts()
         {
             // t0 for trees, logs, plain rocks and destructibles with a drop table: the owner
             // destroys through ZNetScene.Destroy, every other client learns of it through
@@ -119,15 +121,23 @@ namespace BetterPerformance
                 ?? throw new InvalidOperationException("ZDOMan.CreateNewZDO(ZDOID, Vector3, int) is missing.");
             if (createZdo.IsStatic || createZdo.ReturnType != typeof(ZDO))
                 throw new InvalidOperationException("Unsupported ZDOMan.CreateNewZDO signature.");
-            var createObject = AccessTools.DeclaredMethod(typeof(ZNetScene), "CreateObject", new[] { typeof(ZDO) })
-                ?? throw new InvalidOperationException("ZNetScene.CreateObject(ZDO) is missing.");
-            if (createObject.IsStatic || createObject.ReturnType != typeof(GameObject))
-                throw new InvalidOperationException("Unsupported ZNetScene.CreateObject signature.");
+            // t2. ZNetView.Awake ends with ZNetScene.AddInstance for both of its branches,
+            // the adopted network ZDO and the one it creates itself, so a drop this process
+            // instantiates as owner is observed here where ZNetScene.CreateObject never saw it.
+            var addInstance = AccessTools.DeclaredMethod(typeof(ZNetScene), "AddInstance", new[] { typeof(ZDO), typeof(ZNetView) })
+                ?? throw new InvalidOperationException("ZNetScene.AddInstance(ZDO, ZNetView) is missing.");
+            if (addInstance.IsStatic || !addInstance.IsPublic || addInstance.ReturnType != typeof(void))
+                throw new InvalidOperationException("Unsupported ZNetScene.AddInstance signature.");
+            // The instance answers the loot question directly, so no prefab lookup is needed.
+            if (AccessTools.Property(typeof(ZNetView), "gameObject")?.PropertyType != typeof(GameObject) ||
+                AccessTools.Method(typeof(ZNetView), "GetComponent", Type.EmptyTypes, new[] { typeof(ItemDrop) }) == null ||
+                AccessTools.Method(typeof(ZNetView), "GetComponent", Type.EmptyTypes, new[] { typeof(TreeLog) }) == null)
+                throw new InvalidOperationException("Unsupported ZNetView component accessor contract.");
             if (AccessTools.DeclaredMethod(typeof(ZDO), "GetPosition", Type.EmptyTypes)?.ReturnType != typeof(Vector3) ||
                 AccessTools.DeclaredMethod(typeof(ZDO), "IsOwner", Type.EmptyTypes)?.ReturnType != typeof(bool) ||
                 AccessTools.DeclaredMethod(typeof(ZDO), "GetPrefab", Type.EmptyTypes)?.ReturnType != typeof(int))
                 throw new InvalidOperationException("Unsupported ZDO accessor contract.");
-            return (areaHealth, createZdo, createObject, destroy, zdoDestroyed);
+            return (areaHealth, createZdo, addInstance, destroy, zdoDestroyed);
         }
 
         private static double NowMs() => Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
@@ -171,6 +181,9 @@ namespace BetterPerformance
                 // The rock root, not the hit-area centre: the attribution radius absorbs
                 // the offset between them, which is why the radius cannot be small.
                 var position = __instance.transform.position;
+                // A destroyed MineRock5 area is a rock event; Record only sees the legacy
+                // MineRock component, whose object is destroyed outright.
+                destroyedRock++;
                 current.Destroyed(position.x, position.y, position.z, NowMs());
             }
             catch (Exception exception) { Fail(exception); }
@@ -192,10 +205,12 @@ namespace BetterPerformance
             catch (Exception exception) { Fail(exception); }
         }
 
-        private static void AfterCreateObject(ZDO __0, GameObject? __result)
+        // t2 for every drop this process shows, whichever peer created it: the owner's own
+        // Instantiate reaches here through ZNetView.Awake exactly as a network creation does.
+        private static void AfterAddInstance(ZDO __0, ZNetView __1)
         {
             var current = Observing();
-            if (current == null || __result == null || current.PendingDestructions == 0) return;
+            if (current == null || __0 == null || __1 == null || current.PendingDestructions == 0) return;
             try
             {
                 if (!Bind(current)) return;
@@ -203,10 +218,9 @@ namespace BetterPerformance
                 if (!PrefabKinds.TryGetValue(hash, out bool loot))
                 {
                     if (PrefabKinds.Count >= PrefabCapacity) { unknownPrefabs++; return; }
-                    var prefab = ZNetScene.instance.GetPrefab(hash);
-                    if (prefab == null) { unknownPrefabs++; return; }
                     // A felled tree's visible result is its log, which is not an ItemDrop.
-                    loot = prefab.GetComponent<ItemDrop>() != null || prefab.GetComponent<TreeLog>() != null;
+                    // The live instance carries both components, so no prefab lookup is needed.
+                    loot = __1.GetComponent<ItemDrop>() != null || __1.GetComponent<TreeLog>() != null;
                     PrefabKinds.Add(hash, loot);
                 }
                 if (!loot) return;
@@ -294,6 +308,8 @@ namespace BetterPerformance
             if (Enabled && Dedicated()) { Enabled = false; Status = "dedicated-server"; tracker?.Clear(false); }
             labels.Add(new TextValue("loot_visibility_status", Status));
             labels.Add(new TextValue("loot_visibility_enabled", Enabled && Status == "installed" ? "true" : "false"));
+            labels.Add(new TextValue("loot_visibility_scope",
+                "t2_is_ZNetScene.AddInstance; arrival_missing_means_created_locally; rocks_are_MineRock5_areas"));
             gauges.Add(new NumberValue("loot_visibility_probe_failures", intervalFailures, "calls"));
             gauges.Add(new NumberValue("loot_visibility_unknown_prefabs", unknownPrefabs, "observations"));
             gauges.Add(new NumberValue("loot_visibility_destroyed_rock", destroyedRock, "events"));

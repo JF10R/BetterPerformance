@@ -1,6 +1,6 @@
 # Measurement scope
 
-This document describes the collector and its interpretation limits. Version 0.2.0 also reports status and cumulative activity for the separate [optional object-creation budget](object-budget.md). See [validation](validation.md) for the tested conditions.
+This document describes the collector and its interpretation limits. Version 0.2.0 also reports status and cumulative activity for the separate [optional object-creation budget](object-budget.md). See validation for the tested conditions.
 
 ### Objective
 

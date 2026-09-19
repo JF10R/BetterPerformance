@@ -17,10 +17,16 @@ namespace BetterPerformance
     // already supports. No RPC, ownership, drop table or damage change.
     internal static class MiningDropPlacement
     {
-        private const int TrackedLimit = 4096;
+        private const int TrackedLimit = 4096, SeenPrefabLimit = 8;
         private static readonly Harmony Patches = new Harmony(Plugin.PluginId + ".MiningDropPlacement");
         private static readonly Dictionary<MineRock5, bool> Tracked = new Dictionary<MineRock5, bool>();
         private static readonly HashSet<string> Prefabs = new HashSet<string>(StringComparer.Ordinal);
+        // Diagnostic: the first few MineRock5 prefab names this process saw, each with the
+        // vanilla m_hitEffectAreaCenter read at Awake before any override. It answers whether
+        // a zero applied count means a name mismatch or a prefab that already drops at the hit
+        // point. Bounded at SeenPrefabLimit entries and never grown past it.
+        private static readonly Dictionary<string, bool> SeenPrefabs =
+            new Dictionary<string, bool>(SeenPrefabLimit, StringComparer.Ordinal);
         private static ConfigEntry<bool>? option;
         private static ConfigEntry<string>? prefabList;
         private static long applied, restored, seen, capped, failures;
@@ -88,7 +94,10 @@ namespace BetterPerformance
             try
             {
                 Interlocked.Increment(ref seen);
-                if (!Prefabs.Contains(Utils.GetPrefabName(__instance.gameObject.name))) return;
+                string prefabName = Utils.GetPrefabName(__instance.gameObject.name);
+                if (SeenPrefabs.Count < SeenPrefabLimit && !SeenPrefabs.ContainsKey(prefabName))
+                    SeenPrefabs.Add(prefabName, __instance.m_hitEffectAreaCenter);
+                if (!Prefabs.Contains(prefabName)) return;
                 if (Tracked.ContainsKey(__instance)) return;
                 if (Tracked.Count >= TrackedLimit) Prune();
                 // Past the cap the rock keeps vanilla placement; count it so a healthy
@@ -155,6 +164,19 @@ namespace BetterPerformance
             labels.Add(new TextValue("mining_hitpoint_status", Status));
             labels.Add(new TextValue("mining_hitpoint_enabled", Enabled ? "true" : "false"));
             labels.Add(new TextValue("mining_hitpoint_prefabs", prefabList?.Value ?? string.Empty));
+            labels.Add(new TextValue("mining_hitpoint_seen_prefabs", FormatSeenPrefabs()));
+        }
+
+        private static string FormatSeenPrefabs()
+        {
+            if (SeenPrefabs.Count == 0) return "none";
+            var text = new System.Text.StringBuilder();
+            foreach (var entry in SeenPrefabs)
+            {
+                if (text.Length > 0) text.Append(';');
+                text.Append(entry.Key).Append('=').Append(entry.Value ? "true" : "false");
+            }
+            return text.ToString();
         }
 
         internal static void Reset()
@@ -172,6 +194,7 @@ namespace BetterPerformance
             Reset();
             Tracked.Clear();
             Prefabs.Clear();
+            SeenPrefabs.Clear();
             try { Patches.UnpatchSelf(); } catch { }
             Installed = Enabled = false;
             Status = "disabled";

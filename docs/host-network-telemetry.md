@@ -112,13 +112,63 @@ Limits: counts of native calls, not latency; request completion latency is in th
 telemetry. Hooks count only on the installing thread, anything else lands in
 `ownership_other_thread_skips`.
 
-## Native link figures (0.4.10)
+## Link figures (0.4.11)
 
-`host_net_ping_ms`, `host_net_out_bytes_per_sec`, `host_net_in_bytes_per_sec`,
-`host_net_quality_local` and `host_net_quality_remote` come from `ZNet.GetNetStats`, the same
-call behind the game's F2 overlay. `host_net_status` says what they describe:
-`client_server_link` on a client, `server_peer_aggregate` on a server (quality and ping averaged,
-bytes summed over ready peers), `no_world` before a session, `unavailable` if the call threw.
-They are sampled once per capture interval and are Steam's own estimates, not measured by the
-plugin. Read the loot-visibility network leg and the ownership grant waits against the ping:
-neither can be shorter than half of it.
+### Why the server read zero
+
+`ZNet.GetNetStats` aggregates `ZSteamSocket.GetConnectionQuality` over ready peers. On the
+dedicated server build that method still asks the client interface
+`SteamNetworkingSockets.GetConnectionRealTimeStatus`, which has no game-server context there and
+returns a non-OK result, so every figure collapses to zero. Confirmed on the installed 1.0.15
+assemblies: the server build moved `GetSendQueueSize` and `GetCurrentSendRate` to
+`SteamGameServerNetworkingSockets` and left `GetConnectionQuality` behind. A 4.5 h capture with
+two peers connected recorded every `host_net_*` gauge at zero on the server.
+
+The plugin therefore reads each ready peer's connection itself, through
+`SteamGameServerNetworkingSockets` when `ZNet.IsDedicated()` and the client interface otherwise,
+a listen-server host being a client context. The `HostNet` game test prints a NOTE naming the
+interface `GetConnectionQuality` calls on the assembly under test, so an upstream fix shows up
+the next time the harness runs against either build.
+
+### On a server
+
+| Name | Meaning |
+| --- | --- |
+| `host_net_ping_ms` | Mean round trip over measured peers, as the game averages it. |
+| `host_net_ping_max_ms` | Worst peer, which is the remote player when one is farther away. |
+| `host_net_quality_local` / `_remote` | Minimum over peers, not the mean: the worst link decides. |
+| `host_net_out_bytes_per_sec` / `_in_bytes_per_sec` | Sums over measured peers. |
+| `host_net_pending_bytes_max` | Largest per-peer total of pending reliable, pending unreliable and sent-unacked reliable bytes. |
+| `host_net_peers_ready` / `_measured` / `_unmeasured` | Ready peers, and how many Steam described. |
+
+`host_net_status` reads `server_per_peer` when at least one peer was measured,
+`server_no_peers` when none is ready, `server_peers_unmeasured` when peers are ready and Steam
+described none. The value gauges are omitted rather than exported as zero in the last two cases.
+A `native_fallback:<reason>` means a field or Steam signature the sampler needs has changed and
+the native `GetNetStats` figures are being exported instead; `unavailable:<ExceptionTypeName>`
+means the interval threw and exported nothing.
+
+### On a client
+
+`host_net_status` stays `client_server_link` and the five native `GetNetStats` figures keep
+their meaning, because the client interface is the right one there.
+`host_net_pending_bytes_max` is added for the server link, so the client's own upload backlog is
+visible on the same scale as the server's.
+
+### What the pending-bytes gauge decides
+
+`ZDOMan.SendZDOs` reads `ISocket.GetSendQueueSize` for a peer and skips that peer's sync tick
+when the queue is over 10240 bytes, or when fewer than 2048 bytes remain under it. Pending
+reliable, pending unreliable and sent-unacked reliable are the three counters that total, so
+`host_net_pending_bytes_max` near 10240 means ZDO updates for that peer are being held back.
+BetterNetworking's Queue Size setting raises the effective cap to 32 KB, so read the gauge
+against whichever cap the installation runs.
+
+`host_net_ping_max_ms` and the two minimum qualities identify the remote player's link. Compare
+them with the loot-visibility network leg, measured at 1.5 s mean and 4.6 s maximum on the local
+client when the other player owned the destroyed object: a leg far above the ping is queueing or
+ownership latency, not the link.
+
+Limits: these are Steam's own estimates for the transport, sampled once per capture interval,
+not measured by the plugin. A peer Steam does not describe is counted in
+`host_net_peers_unmeasured`, never as a zero.

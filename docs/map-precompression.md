@@ -4,7 +4,7 @@ Optional, default off. Compresses the character map payload on a background thre
 player explores, and primes the exact compression cache so the synchronous character save
 reuses the result instead of running gzip inside `Game.SavePlayerProfile`.
 
-Motivated by [the pre-compression research](save-precompression-research-2026-09-17.md): the
+Motivated by the pre-compression research: the
 whole map cost sits on the synchronous save, `Minimap.SaveMapData` has exactly one caller and
 `Minimap.GetMapData` exactly one, so priming the cache reaches every map save there is.
 

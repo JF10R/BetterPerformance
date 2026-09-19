@@ -4,7 +4,7 @@ Every probe and optimization in this plugin binds to native methods of the insta
 
 ### 1. Detect the change
 
-- Steam shows the new build; `docs/validation-*.md` record the last verified game version and the `assembly_valheim.dll` SHA-256 (see `docs/cpu-memory-parallelism-2026-09-15.md` for the 1.0.12 hash).
+- Steam shows the new build; the validation records (kept outside the repository, `notes/validation-*.md`) hold the last verified game version and the `assembly_valheim.dll` SHA-256.
 - In a capture, the start record carries `game_version` and every `probe.*` label; interval records carry each module's `*_status` label. Any value other than `enabled` or `installed` after an update is a contract that needs attention: `unavailable`, `unsupported_layout`, `type_unavailable`, `patch_failed`, `unpatch_failed:*`.
 - BepInEx `LogOutput.log` prints one line per module at startup with the same status.
 
@@ -38,14 +38,14 @@ For each affected module, in this order:
 Never validate on a real character or world. The isolated runner copies the game into `.qa/runs/<id>/`, generates a `bp_test_` world, uses a temporary character, verifies by hash that every real save file is unchanged, and restores preferences:
 
 ```powershell
-pwsh -File .qa/run-v045.ps1 -MaxRuns 1 -TestVariant fast_join_baseline
+pwsh -File .qa/run.ps1 -Version <ver> -MaxRuns 1 -TestVariant fast_join_production
 ```
 
 Then read the captures with `scripts/summarize_capture.py` and confirm: `probe_failures_total` = 0, `writer_dropped_records_total` = 0, every module status `installed`/`enabled`, and the module-specific counters listed in the latest `docs/validation-*.md`. Modules that the headless workload cannot exercise (cloud writes, world-map generation, terrain operations, second-player ownership) keep their "unproven at runtime" note and are watched in the first real session through their `*_status` and `*_result` labels.
 
 ### 5. Deploy and record
 
-- Copy `.qa/deploy-0.4.5.ps1` to a new version, keep its checks (no game running, version match, validated-run markers, DLL hash equality with the validated run, no QA DLL in `plugins`, backup before copy, restore on failure) and run it with the validated run root.
+- Run `.qa/deploy.ps1 -Version <ver> -ValidatedRun <run root>` (local tooling, not tracked): it refuses if a game runs, if the DLL version or hash differs from the validated run, or if a run marker is missing; it backs up DLLs and configs first. Add any new config key to its settings table before deploying.
 - Bump `PluginVersion` and the csproj `<Version>`, add the CHANGELOG entry, and write `docs/validation-<version>.md` with the game version, assembly hash, gate results and what stayed unproven.
 - Rollback: the deployment backup directory under `.qa/deployment-backups/` holds the previous DLL and config for each role.
 

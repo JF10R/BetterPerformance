@@ -37,7 +37,7 @@ is disabled. The report script ignores the array today.
 - `damage_text_added` counts `DamageText.AddInworldText` calls and
   `damage_text_live_max` the largest world-text list length seen at a poll, both
   cumulative since the capture started. They size the pooling candidate in
-  `server-host-research-2026-09-15.md` F1; they change no behavior.
+  the research notes (kept outside the repository), F1; they change no behavior.
 - Elapsed time is inclusive: it covers everything the observed call does,
   including work added by other plugins patching the same method.
 - Bytes are the serialized payload the game wrote into the package. They are not

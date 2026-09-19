@@ -35,7 +35,8 @@ namespace BetterPerformance
             return socket;
         }
 
-        private static ZSteamSocket? SteamSocket(ISocket? socket) => Unwrap(socket) as ZSteamSocket;
+        // Shared with HostTelemetry: both need the ServerSync wrapper removed first.
+        internal static ZSteamSocket? SteamSocket(ISocket? socket) => Unwrap(socket) as ZSteamSocket;
 
         // SteamNetworkingPOPID packs 3-4 ASCII characters identifying a Valve datacenter
         // (for example "ord", "fra"). It is a location code, never a peer identity.

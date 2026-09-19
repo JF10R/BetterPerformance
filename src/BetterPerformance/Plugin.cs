@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.10";
+        public const string PluginVersion = "0.4.11";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -96,7 +96,7 @@ namespace BetterPerformance
             MiningDropPlacement.Install(Config, Logger);
             // 0.4.8 opt-in modules: smelter catch-up budget, dungeon spawn slicing and, after the
             // exact map cache it requires, speculative map pre-compression.
-            SmelterCatchupBudget.Install(Config, Logger);
+            SmelterTelemetry.Install(Logger);
             DungeonSpawnSlicing.Install(Config, Logger);
             MapPrecompression.Install(Config, Logger);
             new Terminal.ConsoleCommand("bp_budget", "Experimental object budget: on | off | status (installed at startup; local process only)",
@@ -159,6 +159,8 @@ namespace BetterPerformance
             }
             // Grant counters always; the forced insert itself stays behind its own config key.
             OwnershipExpedite.Install(Config, Logger);
+            // Server-side teleport-ghost fix: re-issues the native sector invalidation after the position write.
+            SectorInvalidationFix.Install(Config, Logger);
             ReplicationTelemetry.Install(Config, Logger);
             ReplicationTelemetry.Enabled = ReplicationTelemetry.Installed;
             TerrainTelemetry.Install(Config, Logger);
@@ -334,8 +336,8 @@ namespace BetterPerformance
                 new TextValue("configuration_semantics", "graphics_applied_event_plus_poll; raw_player_and_active_are_distinct; synchronized_simulation_is_separate; poll_changes_are_observation_times; max_128_field_changes_per_export"),
                 new TextValue("game_version", global::Version.GetVersionString(false)),
                 new TextValue("mode", ObjectCreationBudget.Installed || InitialLoadingOptimization.Installed || FastMapSerialization.Installed || MapCompressionCache.Installed || PackageCopyOptimization.Installed
-                    || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || BiomePointCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled
-                    || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled || SmelterCatchupBudget.Enabled || DungeonSpawnSlicing.Enabled || MapPrecompression.Installed
+                    || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || BiomePointCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || SectorInvalidationFix.Enabled
+                    || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled || DungeonSpawnSlicing.Enabled || MapPrecompression.Installed
                     ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
                 new TextValue("map_serialization_status", FastMapSerialization.Status),
                 new TextValue("queue_semantics", "socket API result; active mods may adjust it or make it negative"),
@@ -368,11 +370,12 @@ namespace BetterPerformance
             ThreadCpuTelemetry.Reset();
             OwnershipTelemetry.Reset();
             OwnershipExpedite.Reset();
+            SectorInvalidationFix.Reset();
             ReplicationCadence.Reset();
             ReplicationTelemetry.Reset();
             GuiSoundDeduplication.Reset();
             MiningDropPlacement.Reset();
-            SmelterCatchupBudget.Reset();
+            SmelterTelemetry.Reset();
             DungeonSpawnSlicing.Reset();
             MapPrecompression.Reset();
             TerrainTelemetry.Reset();
@@ -415,11 +418,12 @@ namespace BetterPerformance
             ActionTelemetry.Sample(gauges, labels);
             OwnershipTelemetry.Sample(gauges, labels);
             OwnershipExpedite.Sample(gauges, labels);
+            SectorInvalidationFix.Sample(gauges, labels);
             ReplicationCadence.Sample(gauges, labels);
             ReplicationTelemetry.Sample(gauges, labels);
             GuiSoundDeduplication.Sample(gauges, labels);
             MiningDropPlacement.Sample(gauges, labels);
-            SmelterCatchupBudget.Sample(gauges, labels);
+            SmelterTelemetry.Sample(gauges, labels);
             DungeonSpawnSlicing.Sample(gauges, labels);
             TerrainTelemetry.Sample(gauges, labels);
             GameplayTelemetry.Sample(gauges, labels);
@@ -522,13 +526,13 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { ActionTelemetry.Finish(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { OwnershipTelemetry.Sample(gauges, labels); OwnershipExpedite.Sample(gauges, labels); }
+            try { OwnershipTelemetry.Sample(gauges, labels); OwnershipExpedite.Sample(gauges, labels); SectorInvalidationFix.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { ReplicationCadence.Sample(gauges, labels); ReplicationTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { TerrainTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { GuiSoundDeduplication.Sample(gauges, labels); MiningDropPlacement.Sample(gauges, labels); SmelterCatchupBudget.Sample(gauges, labels); DungeonSpawnSlicing.Sample(gauges, labels); }
+            try { GuiSoundDeduplication.Sample(gauges, labels); MiningDropPlacement.Sample(gauges, labels); SmelterTelemetry.Sample(gauges, labels); DungeonSpawnSlicing.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { GameplayTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -576,11 +580,12 @@ namespace BetterPerformance
             ActionTelemetry.Uninstall();
             OwnershipTelemetry.Uninstall();
             OwnershipExpedite.Uninstall();
+            SectorInvalidationFix.Uninstall();
             ReplicationCadence.Uninstall();
             ReplicationTelemetry.Uninstall();
             GuiSoundDeduplication.Uninstall();
             MiningDropPlacement.Uninstall();
-            SmelterCatchupBudget.Uninstall();
+            SmelterTelemetry.Uninstall();
             DungeonSpawnSlicing.Uninstall();
             TerrainTelemetry.Uninstall();
             GameplayTelemetry.Uninstall();

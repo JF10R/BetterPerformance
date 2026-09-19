@@ -2,7 +2,7 @@
   <Import Project="../../GamePaths.local.props" Condition="Exists('../../GamePaths.local.props')" />
   <PropertyGroup>
     <TargetFramework>net472</TargetFramework>
-    <Version>0.4.10</Version>
+    <Version>0.4.11</Version>
     <AssemblyName>BetterPerformance</AssemblyName>
     <ValheimDir Condition="'$(ValheimDir)' == ''">$(VALHEIM_DIR)</ValheimDir>
     <GameManagedDir Condition="'$(GameManagedDir)' == '' and Exists('$(ValheimDir)/valheim_Data/Managed')">$(ValheimDir)/valheim_Data/Managed</GameManagedDir>

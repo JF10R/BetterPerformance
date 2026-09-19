@@ -51,7 +51,22 @@ count the t0 events per source, and `item_drop_instances` is the live dropped-it
 offset on this runtime (`tasks/lessons.md`). Three postfixes: `MineRock5.RPC_SetAreaHealth`
 (t0, on every client whether or not it owns the rock), the private
 `ZDOMan.CreateNewZDO(ZDOID, Vector3, int)` whose zero prefab hash is what distinguishes a
-network arrival from local creation (t1), and `ZNetScene.CreateObject` (t2).
+network arrival from local creation (t1), and `ZNetScene.AddInstance(ZDO, ZNetView)` (t2).
+
+## 0.4.11: what the probe missed
+
+The 4.5 h session of 2026-09-17 matched 1,083 drops and every one of them was
+network-created: `locally_owned` and `arrival_missing` both read 0. t2 was a postfix on
+`ZNetScene.CreateObject(ZDO)`, which only network-arrived ZDOs pass through, so drops this
+client instantiated itself as owner never reached t2 and their destructions expired
+unmeasured. That is the owner-side case the question started from.
+
+t2 is now `ZNetScene.AddInstance(ZDO, ZNetView)`, which `ZNetView.Awake` calls for local
+instantiation and network creation alike. `arrival_missing` therefore counts owner-side
+drops from now on, and their perceived delay should sit in the ≤16 ms bucket, since no
+network leg exists. `loot_visibility_destroyed_rock` read 0 all session while this client
+handled 1,271 `RPC_Damage` on copper veins: it counted only the legacy `MineRock`
+component, and now counts destroyed `MineRock5` areas too.
 
 Attribution is positional: a destroyed rock is joined to a drop by distance and time, not
 by identity, because the game records no link between them. t0 is the rock root rather
