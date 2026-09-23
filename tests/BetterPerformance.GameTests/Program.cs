@@ -286,10 +286,14 @@ Module("NetworkFlow", () => NetworkFlowGameTests.Run(game, plugin));
 Module("NetworkCompression", () => NetworkCompressionGameTests.Run(game, plugin));
 Module("CaptureRelay", () => CaptureRelayGameTests.Run(game, plugin));
 Module("Simulation", () => SimulationGameTests.Run(game, plugin));
+Module("ZoneGeneration", () => ZoneGenerationGameTests.Run(game, plugin));
+Module("CharacterSaveDisk", () => CharacterSaveDiskGameTests.Run(game, plugin, managedDirectory));
+Module("DirectRpcAttribution", () => DirectRpcAttributionGameTests.Run(game, plugin));
 Module("Attribution", () => AttributionGameTests.Run(game, plugin));
 Module("CloudWrite", () => CloudWriteGameTests.Run(game, plugin, managedDirectory));
 Module("Replication", () => ReplicationGameTests.Run(game, plugin));
 Module("Terrain", () => TerrainGameTests.Run(game, plugin));
+Module("HeightmapBudget", () => HeightmapBudgetGameTests.Run(game, plugin));
 Module("Gameplay", () => GameplayGameTests.Run(game, plugin));
 Module("GameplayProbes", () => GameplayProbesGameTests.Run(game, plugin));
 Module("GuiSound", () => GuiSoundGameTests.Run(game, plugin));
@@ -298,6 +302,7 @@ Module("LootVisibility", () => LootVisibilityGameTests.Run(game, plugin));
 Module("BiomeCache", () => BiomeCacheGameTests.Run(game, plugin));
 Module("Smelter", () => SmelterGameTests.Run(game, plugin));
 Module("Dungeon", () => DungeonGameTests.Run(game, plugin));
+Module("IdlePregeneration", () => IdlePregenerationGameTests.Run(game, plugin));
 Module("MapPrecompression", () => MapPrecompressionGameTests.Run(game, plugin));
 if (contractFailures.Count > 0)
 {

@@ -39,6 +39,10 @@ internal static class MapBitWriterTests
             Check(!MapBitWriter.TryWrite(writer, new BitArray(2), 3), "short shared map falls back");
             Check(!MapBitWriter.TryWrite(writer, new BitArray(2), -1), "negative count falls back");
             Check(!MapBitWriter.TryWrite(writer, new BitArray(MapBitWriter.MaximumBits + 1), 1), "oversized source falls back");
+            Check(!MapBitWriter.TryWritePacked(writer, null, 0), "null packed source falls back");
+            Check(!MapBitWriter.TryWritePacked(writer, new int[1], 33), "short packed source falls back");
+            Check(!MapBitWriter.TryWritePacked(writer, new int[1], -1), "negative packed count falls back");
+            Check(!MapBitWriter.TryWritePacked(writer, new int[1], MapBitWriter.MaximumBits + 1), "oversized packed count falls back");
             Check(output.Length == 0, "all rejection paths must leave writer untouched");
         }
         bool nestedRejected = false;
@@ -76,6 +80,16 @@ internal static class MapBitWriterTests
         expected.Write("pin suffix / é / 雪");
         actual.Write("pin suffix / é / 雪");
         Check(native.ToArray().SequenceEqual(optimized.ToArray()), "exact payload equality including surrounding bytes");
+        var words = new int[(bits.Length + 31) / 32];
+        bits.CopyTo(words, 0);
+        var original = (int[])words.Clone();
+        using var packed = new MemoryStream();
+        using var packedWriter = new BinaryWriter(packed);
+        packedWriter.Write(0x10203040);
+        Check(MapBitWriter.TryWritePacked(packedWriter, words, count), "packed snapshot accepted");
+        packedWriter.Write("pin suffix / é / 雪");
+        Check(native.ToArray().SequenceEqual(packed.ToArray()), "packed snapshot matches native bytes including suffix");
+        Check(words.SequenceEqual(original), "packed snapshot remains immutable");
     }
 
     private sealed class CallbackStream : MemoryStream

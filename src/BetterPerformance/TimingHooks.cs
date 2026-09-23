@@ -552,6 +552,7 @@ namespace BetterPerformance
                 {
                     double elapsed = (Stopwatch.GetTimestamp() - __state.Started) * 1000.0 / Stopwatch.Frequency;
                     __state.Session.Book.Record(metric, elapsed, __exception != null);
+                    ZoneGenerationTelemetry.RecordPhase(metric, elapsed, __state.Session);
                     // One enum comparison per timed call. UpdatePlacement is local-player only,
                     // so this counter is written from the main thread and nowhere else.
                     if (metric == Metric.PlacementUpdate && elapsed > 10.0) placementUpdateOver10Ms++;

@@ -149,6 +149,16 @@ internal static class MapPrecompressionGameTests
         var getArray = AccessTools.DeclaredMethod(package, "GetArray", Type.EmptyTypes)!;
         byte[] Bytes(object value) => (byte[])getArray.Invoke(value, null)!;
         Check(Bytes(actualInner).SequenceEqual(Bytes(expectedInner)), "worker encode is byte-identical to the native writer order");
+        SetSnapshot("BulkBitsAllowed", true);
+        object bulkInner = buildPayload.Invoke(null, new[] { snapshot })!;
+        Check(Bytes(bulkInner).SequenceEqual(Bytes(expectedInner)), "bulk snapshot encode preserves native explored, shared, pin and public flag bytes");
+        SetSnapshot("ReferencePositionPublic", false);
+        object privateBulk = buildPayload.Invoke(null, new[] { snapshot })!;
+        SetSnapshot("BulkBitsAllowed", false);
+        object privateNative = buildPayload.Invoke(null, new[] { snapshot })!;
+        Check(Bytes(privateBulk).SequenceEqual(Bytes(privateNative)) && Bytes(privateBulk).Last() == 0,
+            "bulk encode preserves a private reference position");
+        SetSnapshot("ReferencePositionPublic", true);
         Check(Bytes(actualInner).Length == 4 + 100 + 100 + 4 + (1 + 4 + 12 + 4 + 1 + 8 + 24) + (1 + 12 + 4 + 1 + 8 + 1) + 1,
             "encoded payload has the native one-byte-per-bit size");
 
@@ -167,6 +177,10 @@ internal static class MapPrecompressionGameTests
         bool savedEnabled = (bool)enabled.GetValue(null)!;
         bool savedInstalled = (bool)AccessTools.DeclaredPropertyGetter(cache, "Installed")!.Invoke(null, null)!;
         int savedThread = (int)mainThread.GetValue(null)!;
+        var moduleOption = AccessTools.DeclaredField(module, "option");
+        object? savedModuleOption = moduleOption.GetValue(null);
+        var moduleInstalled = AccessTools.DeclaredPropertySetter(module, "Installed")!;
+        bool savedModuleInstalled = (bool)AccessTools.DeclaredPropertyGetter(module, "Installed")!.Invoke(null, null)!;
         try
         {
             clear.Invoke(null, null);
@@ -203,6 +217,61 @@ internal static class MapPrecompressionGameTests
             Check(Bytes(staleExpected).SequenceEqual(Bytes(staleActual)), "a stale speculation yields the native bytes");
             Check(Count("primedStale") == stale + 1, "a stale speculation is counted once");
             Check(!(bool)AccessTools.DeclaredField(cache, "primed").GetValue(null)!, "the stale mark is consumed");
+
+            // A completed worker need not wait for the next pump when its exact input saves.
+            var pendingInput = AccessTools.DeclaredField(module, "pendingInput");
+            var pendingEncoded = AccessTools.DeclaredField(module, "pendingEncoded");
+            var pendingWorld = AccessTools.DeclaredField(module, "pendingWorld");
+            clear.Invoke(null, null);
+            pendingInput.SetValue(null, publishedInput);
+            pendingEncoded.SetValue(null, publishedEncoded);
+            pendingWorld.SetValue(null, null);
+            var config = new BepInEx.Configuration.ConfigFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".cfg"), false);
+            config.SaveOnConfigSet = false;
+            moduleOption.SetValue(null, config.Bind("Test", "Enabled", true));
+            moduleInstalled.Invoke(null, new object[] { true });
+            // Saving never waits for the worker's short publication section.
+            var gate = AccessTools.DeclaredField(module, "Gate").GetValue(null)!;
+            using (var entered = new ManualResetEventSlim())
+            using (var release = new ManualResetEventSlim())
+            {
+                bool holderTimedOut = false;
+                var holder = new Thread(() => { lock (gate) { entered.Set(); holderTimedOut = !release.Wait(5000); } });
+                holder.Start();
+                Check(entered.Wait(5000), "worker fixture acquired publication gate");
+                try
+                {
+                    object contendedActual = Activator.CreateInstance(package)!;
+                    write.Invoke(null, new[] { contendedActual, source });
+                    Check(!holderTimedOut && Bytes(contendedActual).SequenceEqual(Bytes(expectedDestination)),
+                        "save falls back to native bytes without waiting for a publishing worker");
+                    Check(pendingInput.GetValue(null) != null, "contended save leaves pending result for a later adoption");
+                }
+                finally { release.Set(); holder.Join(); }
+            }
+            long pendingHits = Count("primedHits");
+            object pendingActual = Activator.CreateInstance(package)!;
+            write.Invoke(null, new[] { pendingActual, source });
+            Check(Bytes(pendingActual).SequenceEqual(Bytes(expectedDestination)) && Count("primedHits") == pendingHits + 1,
+                "save adopts an exact completed worker without waiting for the pump");
+            Check(pendingInput.GetValue(null) == null, "save consumes the matching pending result once");
+
+            // A stale pending snapshot must not evict the current exact cache on a save.
+            pendingInput.SetValue(null, staleInput);
+            pendingEncoded.SetValue(null, publishedEncoded);
+            long matchingHits = Count("hits"), matchingMisses = Count("misses");
+            object preservedActual = Activator.CreateInstance(package)!;
+            write.Invoke(null, new[] { preservedActual, source });
+            Check(Bytes(preservedActual).SequenceEqual(Bytes(expectedDestination)) && Count("hits") == matchingHits + 1 &&
+                Count("misses") == matchingMisses, "stale pending bytes cannot displace a matching saved cache entry");
+            pendingInput.SetValue(null, publishedInput);
+            moduleInstalled.Invoke(null, new object[] { false });
+            long disabledAdoptions = Count("primedHits");
+            write.Invoke(null, new[] { Activator.CreateInstance(package)!, source });
+            Check(Count("primedHits") == disabledAdoptions && pendingInput.GetValue(null) != null,
+                "disabled speculation cannot adopt a worker result during save");
+            pendingInput.SetValue(null, null);
+            pendingEncoded.SetValue(null, null);
         }
         finally
         {
@@ -210,6 +279,11 @@ internal static class MapPrecompressionGameTests
             enabled.SetValue(null, savedEnabled);
             installed.Invoke(null, new object[] { savedInstalled });
             mainThread.SetValue(null, savedThread);
+            moduleOption.SetValue(null, savedModuleOption);
+            moduleInstalled.Invoke(null, new object[] { savedModuleInstalled });
+            AccessTools.DeclaredField(module, "pendingInput").SetValue(null, null);
+            AccessTools.DeclaredField(module, "pendingEncoded").SetValue(null, null);
+            AccessTools.DeclaredField(module, "pendingWorld").SetValue(null, null);
         }
 
         // 8. The module ships off by default and reports why it is unavailable.

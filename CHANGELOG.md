@@ -1,5 +1,30 @@
 # Changelog
 
+### 0.4.15
+
+- Minimap and biome caches: the key no longer contains the plugin version or this plugin's own entry in the mod list. It fingerprints every Harmony patch attached to the cached methods instead (`IlFingerprint`, any owner, all four patch kinds). Before this, every release invalidated both caches, and a verified hit needs three loads under one key, so neither cache had served a hit in three sessions while still paying 0.6-0.8 s of store time per join. Label `*_cache_patch_fingerprint_fallback` shows when a patch could not be fingerprinted and the plugin version was used for it. A change inside a helper that a patch calls is not in the key.
+- Add an opt-in per-frame budget for queued terrain rebuilds on the client (`[Terrain] RebuildBudgetEnabled`, `RebuildBudgetMilliseconds` 4, `RebuildCriticalRadius` 80 m, `RebuildMaxDeferMilliseconds` 500). On 2026-09-23, `HeightmapLateBatch` caused 18 of the second player's 45 loops of 100 ms or more, with 10-128 rebuilds of 4-8 ms in one frame. Scope:
+  - Only rebuilds vanilla queued with `Poke(2)` are skipped for a frame, and they stay queued. Those come from location terrain modifiers.
+  - Order: nearest first, weighted by the camera view. Rebuilds inside the critical radius, overdue ones and those within grass distance always run, and the queue is paced to drain before the deadline.
+  - Not touched: first builds, player digging and levelling, and `ForceGenerateAll`. Gauges: `heightmap_budget_*`.
+- Add opt-in zone generation on a dedicated server while no peer is connected (`[ServerGeneration] IdlePregenerationEnabled`, `IdleRadiusZones` 2 rings beyond the synced simulation distance, `MaxZonesPerRun` 300). On 2026-09-23 the two server freezes (348 and 308 ms) were dungeon generation, which is atomic.
+  - How: one `SpawnZone(Ghost)` per frame, the call `CreateGhostZones` makes, around zones where players were recently. The list persists per world.
+  - Content does not depend on when a zone is generated: vegetation, location and dungeon seeds come from world seed and zone. Zones holding an unplaced unique location are skipped.
+  - Stops as soon as a connection is accepted, and never runs during a save. It only helps if the server runs without players, e.g. started a few minutes before playing. Gauges: `idle_pregen_*`.
+- Loot-visibility attribution v3:
+  - t0 at the destroyed MineRock5 area's centre, not the rock root; sources this process owned are excluded for network arrivals.
+  - Candidates are filtered by the source's drop table and a spawn radius per source kind. The copper-deposit fracture is a source kind; old drops re-entering view are excluded by spawn time.
+  - A witness lists the slowest matches. New first-send legs on the owner client and on the server.
+  - On 2026-09-23, 7 of our 11 slow windows (> 1 s) paired a network drop with a rock this client owned, whose drops can never arrive by network. So the v2 tail was at least partly attribution. A dedicated server now exports its send leg instead of zero observer gauges.
+- Split `CharacterSaveToDisk` into phases, timed only inside `PlayerProfile.SavePlayerToDisk`: cloud checks, hash (`ZPackage.GenerateHash`, a full copy plus SHA-512), write, replace and auto-backup. Also `character_save_package_bytes`. With the map cache hitting, this 42-83 ms step is the largest remaining part of a save. Moving it off the main thread is not proposed: both characters here save to Steam Cloud through the game's save caches.
+
+### 0.4.14
+
+- Improve speculative map compression: write snapshot bits in byte-identical blocks, adopt a finished matching result at save time without waiting for the worker, and make publication/policy completion atomic. Add bulk-run and save-adoption counters; cache lookup timing includes adoption. Runtime savings and hit-rate changes remain unmeasured.
+- Attribute direct `ZRpc.HandlePackage` elapsed time by method identifier, including generic callbacks, without moving the reader or inspecting payloads. Bounded export includes exceptions and skipped headers; direct and routed timings overlap.
+- Correct loot-visibility attribution: freeze the source at network arrival, exclude missing arrivals, ambiguous sources and invalid chronology from timing distributions, and mark legacy/mixed reports. Local creation latency is now explicitly unavailable.
+- Pair each mode's slowest zone spawn with its own heightmap, location, vegetation and dungeon samples. Missing phases stay unavailable and inclusive phases must not be summed. Generation behavior is unchanged.
+
 ### 0.4.13
 
 - Add an opt-in capture relay (`[Relay]`, every key off by default): a client mirrors its capture records to the server it plays on as the writer puts them on disk (`SendCapturesEnabled`), optionally its BepInEx log too (`SendLogEnabled`, a bounded snapshot then live lines; the log names Steam IDs and characters, so it is a separate key for private servers), and a server with `AcceptEnabled` writes them under `captures/remote` with the client's own file name, bounded by `MaxDirectoryMiB`. The server offers first with `BP_RelayOffer`; a vanilla or older server drops that one RPC and nothing else happens. Records are framed with the 0.4.12 Deflate frame and split into 8 KB `ZPackage` chunks sent one per frame, only while the server link's send queue is empty and under `MaxBytesPerSecond` (64 KB/s default), so game traffic never waits behind the relay; a 30-minute client capture (33-42 MB raw, ratio 0.21) costs about 16 KB/s. Nothing is sent at exit or at save on purpose: the socket is gone in the frame the game disconnects, and a save is the worst moment to push 8 MB. The receiver validates the file name to a fixed shape, refuses a stream that does not start at sequence 0 or breaks (gap, corrupt frame, oversize, quota), and closes every file with a `relay_end` trailer naming the reason, which `summarize_capture.py` reports. Offline proof: a writer's output tees through the outbox into a sink byte for byte, footer included.

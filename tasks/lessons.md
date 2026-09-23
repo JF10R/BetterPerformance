@@ -21,3 +21,5 @@
 - Write research Markdown with explicit `encoding='utf-8'` in Python on Windows; default locale encoding can produce invalid UTF-8 even for a single multiplication sign.
 - Validate optional allocation counters with a retained known allocation before trusting them. Unity Mono exposed `GetAllocatedBytesForCurrentThread` but returned zero for a native path proven to allocate arrays; treat those readings as unavailable, not allocation-free execution.
 - A new QA workload must signal both measurement-start and measurement-end before shutdown. The server observer depends on the end marker; missing it invalidates that auxiliary export even when the independent plugin loading capture completed correctly.
+
+- PowerShell does not expand wildcard path arguments for native `rg`; pass the directory and `-g 'Relay*.cs'` instead of a `Relay*.cs` path.

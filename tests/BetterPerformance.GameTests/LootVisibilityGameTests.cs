@@ -39,6 +39,53 @@ internal static class LootVisibilityGameTests
         Check(damageArea.Body.Instructions.Any(i => i.OpCode == Cil.OpCodes.Ldstr && (string)i.Operand == "RPC_SetAreaHealth"),
             "the owner still broadcasts RPC_SetAreaHealth when an area reaches zero health");
 
+        // 1b. v3 t0 is the destroyed area's centre, read in a prefix because the handler's
+        //     UpdateMesh deactivates the area collider, whose bounds are then empty.
+        FieldDefinition hitAreas = rock.Fields.SingleOrDefault(f => f.Name == "m_hitAreas")
+            ?? throw new InvalidOperationException("Loot visibility: MineRock5.m_hitAreas is missing.");
+        Check(!hitAreas.IsStatic && hitAreas.FieldType.FullName == "System.Collections.Generic.List`1<MineRock5/HitArea>",
+            "MineRock5.m_hitAreas is still the instance list of hit areas the area index reads");
+        TypeDefinition hitArea = rock.NestedTypes.Single(t => t.Name == "HitArea");
+        Check(hitArea.Fields.Any(f => f.Name == "m_collider" && !f.IsStatic && f.FieldType.FullName == "UnityEngine.Collider"),
+            "MineRock5.HitArea.m_collider is still the area's Collider");
+        Check(damageArea.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Name == "get_bounds") &&
+              damageArea.Body.Instructions.Any(i => (i.Operand as FieldReference)?.Name == "m_dropItems"),
+            "DamageArea still places drops from m_dropItems at the area collider's bounds centre");
+        Check(areaHealth.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Name == "UpdateMesh"),
+            "RPC_SetAreaHealth still ends in UpdateMesh, which is why the centre is read before it");
+        TypeDefinition routed = gameModule.GetType("ZNet")!;
+        Check(routed.Methods.Any(m => m.HasBody &&
+                m.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Name == "SetUID") &&
+                m.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Name == "GetSessionID")),
+            "the routed-RPC sender id is still the ZDO session id, so sender == GetSessionID marks this process's own destruction");
+
+        // 1c. Drop tables and spawn prefabs each source kind's destruction reads.
+        foreach (var (type, field, fieldType) in new[]
+        {
+            ("MineRock5", "m_dropItems", "DropTable"), ("MineRock", "m_dropItems", "DropTable"),
+            ("DropOnDestroyed", "m_dropWhenDestroyed", "DropTable"), ("TreeLog", "m_dropWhenDestroyed", "DropTable"),
+            ("TreeBase", "m_dropWhenDestroyed", "DropTable"), ("TreeBase", "m_logPrefab", "UnityEngine.GameObject"),
+            ("TreeBase", "m_logSpawnPoint", "UnityEngine.Transform"), ("TreeLog", "m_subLogPrefab", "UnityEngine.GameObject"),
+            ("TreeLog", "m_subLogPoints", "UnityEngine.Transform[]"), ("TreeLog", "m_spawnDistance", "System.Single"),
+            ("Destructible", "m_spawnWhenDestroyed", "UnityEngine.GameObject"),
+            ("DropTable", "m_drops", "System.Collections.Generic.List`1<DropTable/DropData>"),
+        })
+            Check(gameModule.GetType(type)?.Fields.Any(f => f.Name == field && !f.IsStatic && f.IsPublic && f.FieldType.FullName == fieldType) == true,
+                type + "." + field + " is still a public " + fieldType);
+        MethodDefinition logDestroy = gameModule.GetType("TreeLog")!.Methods.Single(m => m.Name == "Destroy" && m.Parameters.Count == 2);
+        Check(logDestroy.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Name == "CheckDropConversion"),
+            "TreeLog.Destroy still converts drops, so its table includes Game.m_damageTypeDropConversions results");
+        MethodDefinition dropAwake = gameModule.GetType("ItemDrop")!.Methods.Single(m => m.Name == "Awake" && m.Parameters.Count == 0);
+        Check(dropAwake.Body.Instructions.Any(i => (i.Operand as FieldReference)?.Name == "s_spawnTime" &&
+                (i.Operand as FieldReference)?.DeclaringType.FullName == "ZDOVars") &&
+              gameModule.GetType("ZDO")!.Methods.Any(m => m.Name == "GetLong" && m.ReturnType.FullName == "System.Int64" &&
+                m.Parameters.Select(p => p.ParameterType.FullName).SequenceEqual(new[] { "System.Int32", "System.Int64" })),
+            "ItemDrop.Awake still stamps ZDOVars.s_spawnTime, which the stale-drop filter reads through ZDO.GetLong(int, long)");
+        MethodDefinition breakRock = gameModule.GetType("Destructible")!.Methods.Single(m => m.Name == "Destroy" && m.Parameters.Count == 1);
+        Check(breakRock.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Name == "Damage" &&
+                (i.Operand as MethodReference)?.DeclaringType.FullName == "MineRock5"),
+            "Destructible.Destroy still damages its spawned MineRock5 at once, before any client has that instance");
+
         // 2. t1: the single creation point for a ZDO this process has never seen. The third
         //    parameter is the discriminator the module depends on, so its default and the
         //    two call sites are contract, not incidental.
@@ -109,16 +156,36 @@ internal static class LootVisibilityGameTests
         Check(dropInstances == null || (dropInstances.IsStatic && dropInstances.FieldType.FullName.StartsWith("System.Collections.Generic.List`1<ItemDrop>")),
             "ItemDrop.s_instances, when present, is the static list the population gauge reads");
 
-        // 4. The plugin side is three postfixes and two prefixes that return void; none can
-        //    replace or skip native work.
+        // 3c. Send legs: SendZDOs records every ZDO it wrote in the peer's sent map, and
+        //     RPC_ZDOData deserializes (so knows the prefab) only after creating the ZDO.
+        MethodDefinition sendZdos = zdoMan.Methods.SingleOrDefault(m => m.Name == "SendZDOs" &&
+            m.Parameters.Select(p => p.ParameterType.FullName).SequenceEqual(new[] { "ZDOMan/ZDOPeer", "System.Boolean" }))
+            ?? throw new InvalidOperationException("Loot visibility: ZDOMan.SendZDOs(ZDOPeer, bool) is missing.");
+        Check(!sendZdos.IsStatic && sendZdos.ReturnType.FullName == "System.Boolean", "ZDOMan.SendZDOs is an instance method returning bool");
+        var sendBody = sendZdos.Body.Instructions.ToList();
+        Check(sendBody.Any(i => (i.Operand as FieldReference)?.Name == "m_zdos") &&
+              sendBody.Any(i => (i.Operand as MethodReference)?.Name == "set_Item"),
+            "SendZDOs still writes each sent ZDO into the peer's m_zdos map the send leg reads");
+        Check(zdoData.Parameters.Select(p => p.ParameterType.FullName).SequenceEqual(new[] { "ZRpc", "ZPackage" }) &&
+              zdoData.ReturnType.FullName == "System.Void", "ZDOMan.RPC_ZDOData(ZRpc, ZPackage) is a void handler");
+        var dataBody = zdoData.Body.Instructions.ToList();
+        int created = dataBody.FindIndex(i => (i.Operand as MethodReference)?.Resolve() == createNew);
+        int deserialized = dataBody.FindIndex(i => (i.Operand as MethodReference)?.Name == "Deserialize");
+        Check(created >= 0 && deserialized > created, "RPC_ZDOData deserializes the prefab after creating the ZDO, so the server classifies in a postfix");
+
+        // 4. The plugin side is postfixes and prefixes that return void; none can replace
+        //    or skip native work.
         TypeDefinition module = pluginModule.GetType("BetterPerformance.LootVisibilityTelemetry")!;
         foreach (var (hook, types) in new[]
         {
-            ("AfterSetAreaHealth", new[] { "MineRock5", "System.Single" }),
-            ("AfterCreateNewZDO", new[] { "ZDOID", "UnityEngine.Vector3", "System.Int32" }),
+            ("BeforeSetAreaHealth", new[] { "MineRock5", "System.Int64", "System.Int32", "System.Single" }),
+            ("AfterCreateNewZDO", new[] { "ZDOID", "UnityEngine.Vector3", "System.Int32", "ZDO" }),
             ("AfterAddInstance", new[] { "ZDO", "ZNetView" }),
             ("BeforeDestroy", new[] { "UnityEngine.GameObject" }),
             ("BeforeZdoDestroyed", new[] { "ZNetScene", "ZDO" }),
+            ("AfterSendZdos", new[] { "System.Object", "System.Boolean" }),
+            ("BeforeZdoData", new string[0]),
+            ("AfterZdoData", new string[0]),
         })
         {
             MethodDefinition postfix = module.Methods.Single(m => m.Name == hook);

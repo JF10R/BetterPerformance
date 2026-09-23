@@ -39,6 +39,7 @@ namespace BetterPerformance
         private static long hits, misses, unverifiedMisses, stored, promoted, mismatches, keyFailures, loadFailures, storeFailures;
         private static double loadMsMax, storeMsMax, keyMs;
         private static volatile string result = "none";
+        private static bool patchFingerprintFallback;
 
         internal static bool Installed { get; private set; }
         internal static bool Enabled { get; private set; }
@@ -250,7 +251,6 @@ namespace BetterPerformance
         {
             var material = new StringBuilder(4096);
             material.Append("BetterPerformance/BiomeCache/").Append(BiomeCacheStore.FormatVersion).Append('\n');
-            material.Append("plugin=").Append(Plugin.PluginVersion).Append('\n');
             material.Append("game=").Append(global::Version.GetVersionString()).Append('\n');
             material.Append("seed=").Append(world.m_seed.ToString(CultureInfo.InvariantCulture)).Append('\n');
             material.Append("seedName=").Append(world.m_seedName ?? "").Append('\n');
@@ -258,8 +258,8 @@ namespace BetterPerformance
             material.Append("worldGenVersion=").Append(world.m_worldGenVersion.ToString(CultureInfo.InvariantCulture)).Append('\n');
             material.Append("size=").Append(SizeConstant).Append('\n');
             // The whole generator plus the two point-loop methods, by token-independent
-            // fingerprint, and any Harmony owner on them: a mod that reshapes biomes must
-            // change the key even when it does not change the game binary.
+            // fingerprint, and every Harmony patch's own fingerprint on them: a mod that
+            // reshapes biomes must change the key even when it does not change the game binary.
             var methods = new List<MethodBase>();
             foreach (var method in typeof(WorldGenerator).GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
                 methods.Add(method);
@@ -270,19 +270,20 @@ namespace BetterPerformance
             if (generate == null || mapToWorld == null) return null;
             methods.Add(generate); methods.Add(mapToWorld);
             methods.Sort((a, b) => string.CompareOrdinal(a.DeclaringType!.FullName + "::" + a, b.DeclaringType!.FullName + "::" + b));
+            bool fallback = false;
             foreach (var method in methods)
             {
                 if (method.IsAbstract || method.GetMethodBody() == null) continue;
                 material.Append(method.DeclaringType!.FullName).Append("::").Append(method).Append('=')
                     .Append(IlFingerprint.Compute(method)).Append('|');
-                var owners = Harmony.GetPatchInfo(method)?.Owners;
-                if (owners != null && owners.Count > 0)
-                {
-                    var sorted = new List<string>(owners); sorted.Sort(StringComparer.Ordinal);
-                    material.Append(string.Join(",", sorted.ToArray()));
-                }
+                // What used to be "plugin=<version>" for the whole key: every patch attached
+                // to this method, fingerprinted, so a patch's own change moves the key
+                // without moving on every unrelated release.
+                material.Append(PatchFingerprint.Describe(method, Plugin.PluginVersion, out bool methodFallback));
+                if (methodFallback) fallback = true;
                 material.Append('\n');
             }
+            patchFingerprintFallback = fallback;
             string? mods = Plugins();
             if (mods == null) return null;
             material.Append("mods=").Append(mods).Append('\n');
@@ -314,15 +315,16 @@ namespace BetterPerformance
 
         private static string? Plugins()
         {
-            var names = new List<string>();
+            var mods = new List<KeyValuePair<string, string>>();
             try
             {
                 foreach (var info in Chainloader.PluginInfos)
-                    names.Add(info.Key + "@" + (info.Value?.Metadata?.Version?.ToString() ?? "?"));
+                    mods.Add(new KeyValuePair<string, string>(info.Key, info.Value?.Metadata?.Version?.ToString() ?? "?"));
             }
             catch (Exception) { return null; }
-            names.Sort(StringComparer.Ordinal);
-            return string.Join("\n", names.ToArray());
+            // Another mod's GUID@version must still move the key; a release of this plugin
+            // must not, now that its patches are fingerprinted directly.
+            return CacheKeyMaterial.DescribeMods(mods, Plugin.PluginId);
         }
 
         private static double Since(long started) => (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
@@ -343,6 +345,7 @@ namespace BetterPerformance
             labels.Add(new TextValue("biome_cache_mode", Mode));
             labels.Add(new TextValue("biome_cache_enabled", Enabled ? "true" : "false"));
             labels.Add(new TextValue("biome_cache_result", result));
+            labels.Add(new TextValue("biome_cache_patch_fingerprint_fallback", patchFingerprintFallback ? "true" : "false"));
             gauges.Add(new NumberValue("biome_cache_hits", Interlocked.Read(ref hits), "loads"));
             gauges.Add(new NumberValue("biome_cache_misses", Interlocked.Read(ref misses), "loads"));
             gauges.Add(new NumberValue("biome_cache_misses_unverified", Interlocked.Read(ref unverifiedMisses), "loads"));
@@ -363,6 +366,7 @@ namespace BetterPerformance
             Interlocked.Exchange(ref stored, 0); Interlocked.Exchange(ref promoted, 0); Interlocked.Exchange(ref mismatches, 0);
             Interlocked.Exchange(ref keyFailures, 0); Interlocked.Exchange(ref loadFailures, 0); Interlocked.Exchange(ref storeFailures, 0);
             loadMsMax = storeMsMax = keyMs = 0;
+            patchFingerprintFallback = false;
         }
 
         internal static void Uninstall()

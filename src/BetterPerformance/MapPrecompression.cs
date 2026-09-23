@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Reflection;
 using System.Threading;
 using BepInEx.Configuration;
@@ -32,12 +33,13 @@ namespace BetterPerformance
         private static string policyLabel = "none";
         private static int mainThread;
         private static long changes;
-        private static long runs, skippedDirty, skippedInFlight, published, stale, failures;
+        private static long runs, skippedDirty, skippedInFlight, published, stale, failures, saveAdoptions, bulkRuns;
         private static double snapshotMsMax, workerMsMax;
         private static double lastPumpSeconds = double.NegativeInfinity;
         private static byte[]? pendingInput, pendingEncoded;
         private static ZNet? pendingWorld;
         private static readonly Stopwatch Clock = Stopwatch.StartNew();
+        private static readonly FieldInfo PackageWriter = AccessTools.DeclaredField(typeof(ZPackage), "m_writer");
 
         // The pump only reconsiders at this cadence; the quiet window is measured in seconds,
         // so a per-frame evaluation would buy nothing and cost a pin scan every frame.
@@ -163,6 +165,7 @@ namespace BetterPerformance
                 if (snapshot == null) return;
                 lock (Gate) { policy.Dispatch(now, snapshot.Change); }
                 runs++;
+                if (snapshot.BulkBitsAllowed) bulkRuns++;
                 var worker = new Thread(Encode) { IsBackground = true, Name = "BetterPerformance.MapPrecompression", Priority = System.Threading.ThreadPriority.BelowNormal };
                 worker.Start(snapshot);
             }
@@ -242,6 +245,7 @@ namespace BetterPerformance
                 ReferencePositionPublic = net.IsReferencePositionPublic(),
                 World = net,
                 Change = ChangeCounter(minimap),
+                BulkBitsAllowed = FastMapSerialization.CanWriteSnapshotBits,
             };
         }
 
@@ -267,11 +271,12 @@ namespace BetterPerformance
                     pendingInput = input;
                     pendingEncoded = encoded;
                     pendingWorld = snapshot.World;
+                    policy?.Complete(produced: true);
+                    produced = true;
                 }
-                produced = true;
             }
             catch (Exception) { Interlocked.Increment(ref failures); }
-            finally { lock (Gate) { policy?.Complete(produced); } }
+            finally { if (!produced) lock (Gate) { policy?.Complete(produced: false); } }
         }
 
         // The writer order of Minimap.GetMapData's inner package, sourced from the snapshot.
@@ -279,8 +284,8 @@ namespace BetterPerformance
         {
             var package = new ZPackage();
             package.Write(snapshot.TextureSize);
-            for (int i = 0; i < snapshot.Length; i++) package.Write(Bit(snapshot.Explored, i));
-            for (int j = 0; j < snapshot.Length; j++) package.Write(Bit(snapshot.Others, j));
+            WriteBits(package, snapshot.Explored, snapshot.Length, snapshot.BulkBitsAllowed);
+            WriteBits(package, snapshot.Others, snapshot.Length, snapshot.BulkBitsAllowed);
             package.Write(snapshot.Pins.Length);
             for (int i = 0; i < snapshot.Pins.Length; i++)
             {
@@ -298,21 +303,48 @@ namespace BetterPerformance
 
         private static bool Bit(int[] words, int index) => (words[index >> 5] & (1 << (index & 31))) != 0;
 
-        // Publication happens here, on the main thread, so the cache keeps its single-thread
-        // model and the save path never takes a lock.
-        private static bool TryAdoptPending()
+        private static void WriteBits(ZPackage package, int[] words, int count, bool allowBulk)
         {
+            var writer = allowBulk ? PackageWriter?.GetValue(package) as BinaryWriter : null;
+            if (writer != null && writer.GetType() == typeof(BinaryWriter) &&
+                writer.BaseStream.GetType() == typeof(MemoryStream) && MapBitWriter.TryWritePacked(writer, words, count)) return;
+            for (int i = 0; i < count; i++) package.Write(Bit(words, i));
+        }
+
+        // Publication stays on the main thread. Never wait for a worker, including when a
+        // save polls this slot; complete-input comparison happens outside the publication lock.
+        internal static bool TryAdoptPending(ArraySegment<byte>? savingInput = null)
+        {
+            if (savingInput.HasValue && !Enabled) return false;
             byte[]? input, encoded; ZNet? world;
-            lock (Gate)
+            if (!Monitor.TryEnter(Gate)) return false;
+            try
             {
                 if (pendingInput == null || pendingEncoded == null) return false;
                 input = pendingInput; encoded = pendingEncoded; world = pendingWorld;
-                pendingInput = pendingEncoded = null; pendingWorld = null;
             }
+            finally { Monitor.Exit(Gate); }
+            // A save can race the next 250 ms pump. Serve a finished worker immediately,
+            // but never replace an already useful cache entry with a stale speculation.
+            if (savingInput.HasValue)
+            {
+                var saving = savingInput.Value;
+                if (saving.Count != input.Length) return false;
+                for (int i = 0; i < saving.Count; i++)
+                    if (saving.Array![saving.Offset + i] != input[i]) return false;
+            }
+            if (!Monitor.TryEnter(Gate)) return false;
+            try
+            {
+                if (!ReferenceEquals(pendingInput, input) || !ReferenceEquals(pendingEncoded, encoded)) return false;
+                pendingInput = pendingEncoded = null; pendingWorld = null;
+                policy?.Adopted();
+            }
+            finally { Monitor.Exit(Gate); }
             bool adopted = MapCompressionCache.Adopt(input, encoded, world);
             // The worker increments failures too, so this counter must be atomic on both sides.
             if (adopted) Interlocked.Increment(ref published); else Interlocked.Increment(ref failures);
-            lock (Gate) { policy?.Adopted(); }
+            if (adopted && savingInput.HasValue) saveAdoptions++;
             return true;
         }
 
@@ -325,6 +357,8 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("map_precompress_snapshot_ms_max", snapshotMsMax, "ms"));
             gauges.Add(new NumberValue("map_precompress_worker_ms_max", workerMsMax, "ms"));
             gauges.Add(new NumberValue("map_precompress_published", published, "calls"));
+            gauges.Add(new NumberValue("map_precompress_save_adoptions", saveAdoptions, "calls"));
+            gauges.Add(new NumberValue("map_precompress_bulk_runs", bulkRuns, "calls"));
             gauges.Add(new NumberValue("map_precompress_primed_hits", MapCompressionCache.PrimedHits, "calls"));
             gauges.Add(new NumberValue("map_precompress_stale", stale, "calls"));
             gauges.Add(new NumberValue("map_precompress_failures", Interlocked.Read(ref failures), "calls"));
@@ -372,6 +406,7 @@ namespace BetterPerformance
             internal bool ReferencePositionPublic;
             internal ZNet? World;
             internal long Change;
+            internal bool BulkBitsAllowed;
         }
     }
 }

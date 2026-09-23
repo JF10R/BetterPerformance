@@ -29,6 +29,30 @@ These scopes overlap by construction. `WearBatch` contains `WearSupportUpdate` c
 
 `WearNTear.UpdateWear` and `TerrainComp.Update` run per piece and per instance every frame; hooking them would cost more than it reveals. `DungeonGenerator.Generate(int, SpawnMode)` is left unpatched so the outer entry is not double counted. `SlowUpdater.UpdateLoop` returns `IEnumerator`: timing it would measure one coroutine allocation, not the work spread across frames, so it is reported as `unavailable_coroutine` and has no metric.
 
+### Paired zone-generation peaks
+
+`[Diagnostics] ZoneGenerationTelemetry` defaults to `true` and requires restart. It
+observes `ZoneSystem.SpawnZone` while a capture is active and preserves its return value,
+out root and exception. It does not defer, reorder or change generation.
+
+Four bounded slots (`client`, `full`, `ghost`, `unknown`) retain counts, elapsed sums and
+the slowest complete call per mode per interval. Gauges use
+`zone_generation_<mode>_calls`, `_succeeded`, `_failed`, `_over_50ms`, `_sum_ms`, `_peak_ms`
+and `_peak_{heightmap,locations,vegetation,dungeon}_ms`. The peak's outcome label is
+`returned_true`, `returned_false` or `exception`; native `true` means the spawn succeeded,
+not necessarily that a previously unexplored zone was generated.
+
+Phase durations come from existing method timings and belong to that same slowest call.
+They are sums of inclusive samples and can overlap, especially with nested spawns; do not
+sum them or subtract them to claim an exclusive remainder. A phase whose method probe is
+unavailable has a status label and no duration gauge. `Capture.MethodTimings` must be on
+for these phase measurements. No coordinates, seeds or object references are retained.
+
+The report selects the largest total peak and keeps that record's phase values together.
+Probe failures and off-thread skips are explicit. Reset/capture changes discard unfinished
+scopes. Offline tests exercise nested modes, exceptions, reset boundaries and missing phases;
+Unity runtime overhead remains unmeasured.
+
 ### Population gauges
 
 | Gauge | Meaning |

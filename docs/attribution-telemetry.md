@@ -1,8 +1,8 @@
 # Attribution telemetry
 
 Per-name cost attribution. Aggregate timings say a phase is slow; these rows say
-which prefab or routed RPC carried the cost. Diagnostics only: no game state is
-read for its value, written, or repositioned.
+which prefab or RPC carried the cost. Diagnostics only: identifiers, handler metadata and
+elapsed durations are observed without changing dispatch or game state.
 
 ### Schema
 
@@ -10,7 +10,7 @@ Each `interval` and `capture_end` record carries an `attributions` array. A row 
 
 | field | meaning |
 | --- | --- |
-| `group` | `prefab_create`, `prefab_send_bytes`, `routed_rpc` or `routed_rpc_target` |
+| `group` | `prefab_create`, `prefab_send_bytes`, `direct_rpc`, `routed_rpc` or `routed_rpc_target` |
 | `key` | prefab name, RPC identifier, a hash fallback, or `other` |
 | `count` | observations in the interval |
 | `sumMs` | total inclusive elapsed time, milliseconds |
@@ -18,7 +18,7 @@ Each `interval` and `capture_end` record carries an `attributions` array. A row 
 | `bytes` | serialized payload bytes; always 0 outside `prefab_send_bytes` |
 
 Older captures have no `attributions` key and the array is empty when the probe
-is disabled. The report script ignores the array today.
+is disabled. The report script renders the groups separately.
 
 ### Semantics
 
@@ -27,6 +27,11 @@ is disabled. The report script ignores the array today.
   the package's written length before and after the call.
 - `routed_rpc` times `ZRoutedRpc.HandleRoutedRPC` and keys it by the routed
   method hash.
+- `direct_rpc` times `ZRpc.HandlePackage`, keyed by its four-byte method identifier.
+  It includes decoding, the callback, nested routed dispatch and other patched work.
+  Never add it to `routed_rpc`. Heartbeat identifier zero is excluded; malformed or
+  unsupported headers are skipped and counted. Native exceptions propagate unchanged
+  and increment `attribution_direct_rpc_failures`.
 - `routed_rpc_target` re-reports the same timings for the RPCs named in
   `[Diagnostics] AttributionTargetSplitRpcs` (default `RPC_Damage`,
   `RPC_ApplyOperation`, `RPC_RequestOwn`, `RPC_RequestOpen`), keyed by the RPC and
@@ -57,6 +62,11 @@ is disabled. The report script ignores the array today.
   key is then the handler's method name, such as `ZNet.RPC_PeerInfo`, not the
   registered name. An unresolved hash exports as `hash:<int>`.
 - Keys are prefab and method identifiers. No RPC payload is read or stored.
+- Direct RPC identifiers are observed from the existing `BinaryReader` memory buffer,
+  without moving its cursor or copying the package. A custom reader/stream or inaccessible
+  buffer is refused. Callback metadata from the dispatcher's registry resolves generic
+  registrations, with a 512-entry cache retaining method metadata, not peers or delegates.
+  A shared identifier uses the first observed callback name; it is not a per-peer split.
 - A `routed_rpc_target` key is a lossy mix of the two hashes, named from a
   256-entry pair map. Past that cap the row exports as `composite:<int>`; a mix
   collision keeps the first pair's name. Both are counted in `attribution_target_*`.
@@ -70,5 +80,8 @@ is disabled. The report script ignores the array today.
   are dropped into `other` and counted in the group's `dropped_records` gauge.
 - Non-finite, negative durations and negative byte counts are counted as invalid
   and never stored.
+- `attribution_direct_rpc_status` reports availability. Header skips, heartbeat packets,
+  failed calls and name-cache capacity skips are explicit gauges. Scopes ending after a
+  reset or capture change are discarded rather than leaking into the next capture.
 - Overhead has not been measured in a running game. Compilation and the offline
   harness establish signatures and installation, not runtime cost.

@@ -22,20 +22,28 @@ whole map cost sits on the synchronous save, `Minimap.SaveMapData` has exactly o
    `ZNet.IsReferencePositionPublic()`. The pin author is read reflectively and converted to a
    string here, because the native writer only ever uses its `ToString()`.
 4. **Worker.** A background thread re-issues `GetMapData`'s inner-package writes in the same
-   order, then calls the game's own `ZPackage.WriteCompressed`, which is `Utils.Compress` plus
-   a length and a payload write.
+   order. When the verified fast bool writer is available, packed snapshot bits are expanded
+   into the same one-byte-per-bool representation in bounded blocks; otherwise it uses the
+   native bool writer. It then calls the game's own `ZPackage.WriteCompressed`, which is
+   `Utils.Compress` plus a length and a payload write.
 5. **Publish** (main thread). The next pump adopts the `(input, encoded)` pair into the exact
    cache by reference.
 6. **Save.** `Minimap.GetMapData` runs as usual; the cache compares the complete serialized
-   input and, on equality, writes the pre-computed bytes.
+   input and, on equality, writes the pre-computed bytes. A finished worker result can also
+   be adopted here, before the next pump, only if its full input matches the save. A stale
+   pending result cannot replace a valid cache entry on this path.
 
 ## Thread model
 
 Nothing the worker touches is owned by the game. `ZPackage` is a `MemoryStream` plus a
 `BinaryWriter`, and the compressor is `GZipStream` over a `MemoryStream`; no Unity API is
 called off the main thread. The snapshot and the publication both happen on the main thread,
-so `ExactByteCache` keeps its single-thread model and the save path takes no lock. The worker
-runs at below-normal priority with `IsBackground = true`.
+so `ExactByteCache` keeps its single-thread model. The save path polls the publication lock
+with `Monitor.TryEnter`: if it is busy, native compression remains available without waiting
+for the worker. It compares the immutable input outside that lock, then revalidates the
+publication references before removing the pending result. Worker publication and policy
+completion are atomic with respect to adoption. The worker runs at below-normal priority
+with `IsBackground = true`.
 
 ## Invariants
 
@@ -75,7 +83,10 @@ an unbounded trigger is the realistic way to turn this into a net loss on a weak
 ## Telemetry
 
 Gauges `map_precompress_runs`, `_skipped_dirty`, `_skipped_inflight`, `_snapshot_ms_max`,
-`_worker_ms_max`, `_published`, `_primed_hits`, `_stale`, `_failures`. Labels
+`_worker_ms_max`, `_published`, `_primed_hits`, `_stale`, `_failures`, `_save_adoptions`,
+`_bulk_runs`. The last two count results adopted directly during a save and workers using
+the bulk bool writer. `map_cache_lookup_ms_total` includes save-time adoption and its exact
+input comparison as well as the cache lookup. Labels
 `map_precompress_status`, `map_precompress_enabled`, `map_precompress_policy`.
 
 `_primed_hits` and `_stale` come from the cache's own single entry, which is marked when a
@@ -96,13 +107,15 @@ Offline, in `tests/BetterPerformance.Tests`: the trigger policy (quiet window, u
 state, minimum interval, rolling-minute cap, reset) and the in-flight guard, plus adoption in
 `ExactByteCacheTests`.
 
-Offline, in `tests/BetterPerformance.GameTests` (32 checks): the hooked signatures; the map,
+Offline, in `tests/BetterPerformance.GameTests`: the hooked signatures; the map,
 pin and reference-position field contracts; that `Minimap.SaveMapData` and
 `Minimap.GetMapData` have exactly one caller each, counted over the whole game assembly; the
 `WriteCompressed`/`Utils.Compress` shape; the native inner-package writer order read off
 `GetMapData`'s own IL; byte identity of the module's encode against that order on synthetic
 data; and an end-to-end adopt-then-save that compares the served bytes against native
-compression of the same input, including the stale case.
+compression of the same input, including stale and disabled cases, adoption before the
+next pump, and a worker holding the publication lock while a save proceeds. Core tests cover
+packed-bit boundaries and byte identity. These checks do not measure Unity session gains.
 
 ## Unproven
 

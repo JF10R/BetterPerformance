@@ -40,7 +40,9 @@ namespace BetterPerformance.Core
         ItemDropSlowUpdate, ItemAutoStack, PickableInteract,
         PlayerUpdate, PlayerFixedUpdate, HudUpdate, ClutterLateUpdate, WaterStaticUpdate,
         // Clutter and build-mode attribution probes. Appended at the end: histogram order is positional.
-        ClutterGeneratePatches, ClutterGenerateVegPatch, BuildMenuOpen, PieceRemove, PieceCopy
+        ClutterGeneratePatches, ClutterGenerateVegPatch, BuildMenuOpen, PieceRemove, PieceCopy,
+        // CharacterSaveToDisk phase attribution. Appended at the end: histogram order is positional.
+        CharacterSaveCloudChecks, CharacterSaveHash, CharacterSaveWrite, CharacterSaveReplace, CharacterSaveBackup
     }
 
     [DataContract]

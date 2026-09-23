@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.13";
+        public const string PluginVersion = "0.4.15";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -99,6 +99,10 @@ namespace BetterPerformance
             SmelterTelemetry.Install(Logger);
             DungeonSpawnSlicing.Install(Config, Logger);
             MapPrecompression.Install(Config, Logger);
+            // 0.4.15 opt-in: queued terrain rebuilds under a per-frame budget (client), zone
+            // generation while no peer is connected (dedicated server).
+            HeightmapRebuildBudget.Install(Config, Logger);
+            IdleZonePregeneration.Install(Config, Logger);
             new Terminal.ConsoleCommand("bp_budget", "Experimental object budget: on | off | status (installed at startup; local process only)",
                 (Terminal.ConsoleEvent)(args =>
                 {
@@ -172,6 +176,8 @@ namespace BetterPerformance
             TerrainTelemetry.Enabled = TerrainTelemetry.Installed;
             GameplayTelemetry.Install(Config, Logger);
             GameplayTelemetry.Enabled = GameplayTelemetry.Installed;
+            ZoneGenerationTelemetry.Install(Config, Logger);
+            CharacterSaveDiskTelemetry.Install(Config, Logger);
             GraphicsSettingsManager.GraphicsSettingsChanged += GraphicsSettingsApplied;
             new Terminal.ConsoleCommand("bp_capture", "BetterPerformance: start | stop | status (local process only)",
                 (Terminal.ConsoleEvent)Command);
@@ -345,6 +351,7 @@ namespace BetterPerformance
                 new TextValue("mode", ObjectCreationBudget.Installed || InitialLoadingOptimization.Installed || FastMapSerialization.Installed || MapCompressionCache.Installed || PackageCopyOptimization.Installed
                     || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || BiomePointCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || SectorInvalidationFix.Enabled || NetworkFlow.Enabled || NetworkCompression.Enabled
                     || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled || DungeonSpawnSlicing.Enabled || MapPrecompression.Installed
+                    || HeightmapRebuildBudget.Enabled || IdleZonePregeneration.Installed
                     ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
                 new TextValue("map_serialization_status", FastMapSerialization.Status),
                 new TextValue("queue_semantics", "socket API result; active mods may adjust it or make it negative"),
@@ -390,6 +397,10 @@ namespace BetterPerformance
             MapPrecompression.Reset();
             TerrainTelemetry.Reset();
             GameplayTelemetry.Reset();
+            ZoneGenerationTelemetry.Reset();
+            HeightmapRebuildBudget.Reset();
+            IdleZonePregeneration.Reset();
+            CharacterSaveDiskTelemetry.Reset();
             RenderTelemetry.Reset();
             EngineTelemetry.Reset();
             current = new CaptureSession(directory,
@@ -440,6 +451,10 @@ namespace BetterPerformance
             DungeonSpawnSlicing.Sample(gauges, labels);
             TerrainTelemetry.Sample(gauges, labels);
             GameplayTelemetry.Sample(gauges, labels);
+            ZoneGenerationTelemetry.Sample(gauges, labels);
+            IdleZonePregeneration.Sample(gauges, labels);
+            HeightmapRebuildBudget.Sample(gauges, labels);
+            CharacterSaveDiskTelemetry.Sample(gauges, labels);
             AttributionTelemetry.Sample(gauges, labels);
             LoadingTelemetry.Sample(gauges, labels);
             LoadingDetailsTelemetry.Sample(gauges, labels);
@@ -549,6 +564,14 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { GameplayTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
+            try { ZoneGenerationTelemetry.Sample(gauges, labels); }
+            catch { session.RecordProbeFailure(); }
+            try { IdleZonePregeneration.Sample(gauges, labels); }
+            catch { session.RecordProbeFailure(); }
+            try { HeightmapRebuildBudget.Sample(gauges, labels); }
+            catch { session.RecordProbeFailure(); }
+            try { CharacterSaveDiskTelemetry.Sample(gauges, labels); }
+            catch { session.RecordProbeFailure(); }
             try { LootVisibilityTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             AttributionSummary[]? finalAttributions = null;
@@ -605,6 +628,10 @@ namespace BetterPerformance
             DungeonSpawnSlicing.Uninstall();
             TerrainTelemetry.Uninstall();
             GameplayTelemetry.Uninstall();
+            ZoneGenerationTelemetry.Uninstall();
+            HeightmapRebuildBudget.Uninstall();
+            IdleZonePregeneration.Uninstall();
+            CharacterSaveDiskTelemetry.Uninstall();
             AttributionTelemetry.Uninstall();
             LoadingTelemetry.Uninstall();
             LoadingDetailsTelemetry.Uninstall();

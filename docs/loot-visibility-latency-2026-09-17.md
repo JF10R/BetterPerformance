@@ -31,12 +31,10 @@ network legs and its sampling is coarser than the effect.
 
 ## Which leg actually applies here
 
-The 2026-09-16 session recorded all 367 `RPC_Damage` on `rock4_copper_frac` handled by the
-host client, so those drops were instantiated locally and no network leg existed
-(`session-report-2026-09-16.md:26`). Ownership decides which of the two cases above the
-player is in, and it varies. The probe reports both and says which one happened:
-a recorded arrival means the rock was owned elsewhere, `arrival_missing` means this
-process dropped the ore itself.
+Ownership decides which case applies, and it varies. An observed network arrival proves
+that the item entered through the network path, not who owned the nearby destruction.
+`arrival_missing` means no arrival was retained: the item may be locally created, or its
+network observation may have been skipped or expired. It does not prove local creation.
 
 ## Probe, implemented
 
@@ -62,19 +60,68 @@ client instantiated itself as owner never reached t2 and their destructions expi
 unmeasured. That is the owner-side case the question started from.
 
 t2 is now `ZNetScene.AddInstance(ZDO, ZNetView)`, which `ZNetView.Awake` calls for local
-instantiation and network creation alike. `arrival_missing` therefore counts owner-side
-drops from now on, and their perceived delay should sit in the ≤16 ms bucket, since no
-network leg exists. `loot_visibility_destroyed_rock` read 0 all session while this client
+instantiation and network creation alike. This widened coverage but did not establish
+valid timing for drops without a network arrival; the correction below excludes them.
+`loot_visibility_destroyed_rock` read 0 all session while this client
 handled 1,271 `RPC_Damage` on copper veins: it counted only the legacy `MineRock`
 component, and now counts destroyed `MineRock5` areas too.
 
 Attribution is positional: a destroyed rock is joined to a drop by distance and time, not
 by identity, because the game records no link between them. t0 is the rock root rather
-than the hit-area centre, which is why the radius cannot be small. Every hook returns
-after one bounded check when no destruction is pending, so the probe costs nothing
-outside a few seconds after each mined chunk.
+than the hit-area centre, which is why the radius cannot be small. Storage and scans are
+bounded, but runtime overhead has not been measured.
 
 Defaults: `LootVisibilityEnabled` true, radius 12 m, window 5 s.
+
+### Attribution v2
+
+`loot_visibility_attribution=network_arrival_single_candidate_v2` identifies the corrected
+semantics. Vanilla 1.0.15 can instantiate a felled tree's logs and drops before destroying
+the source. A local creation can therefore precede its own t0 and match an older nearby
+destruction, inventing a long perceived delay. Earlier captures must not be interpreted as
+proof of that delay or compared directly to v2 timing totals.
+
+Only an observed network arrival with exactly one eligible destruction enters v2 timings.
+Its source timestamp is frozen at arrival and cannot be replaced by a later destruction
+or an overwritten ring slot. Missing arrivals, multiple eligible destructions and invalid
+chronology are excluded from durations and the histogram. `loot_visibility_ambiguous`
+counts ambiguous completions; the missing-arrival and chronology counters remain explicit.
+All three timed legs describe the same eligible observations. Local creation latency is
+unavailable, and even one positional candidate does not prove causality.
+
+Offline tests cover missing arrivals, multiple sources, source changes, ring overwrite,
+expiry, backwards chronology and reporting of legacy/v2 mixtures. No gameplay or pickup
+behavior changes.
+
+### Attribution v3 and send legs (0.4.14)
+
+`loot_visibility_attribution=network_arrival_table_filtered_v3`. The 2026-09-23 session showed
+v2's >1 s tail was partly pairing: in 7 of 11 slow windows this client owned the rock, whose
+drops are local, and the timed network drop was the other player's. v3 therefore:
+
+- takes a `MineRock5` t0 at the destroyed area's collider centre (a prefix, before `UpdateMesh`
+  deactivates it), where `DamageArea` spawns the drops; the rock root is a counted fallback;
+- marks a destruction owned when this process ran it (routed sender = own session id, or the
+  owner's `ZNetScene.Destroy`); an owned source is never a network drop's candidate;
+- keeps up to four candidates per arrival and, at t2, only those whose drop table holds the
+  item and whose kind radius covers the arrival: area max(4 m, half-diagonal + 2 m), tree/log/
+  destructible from their spawn code, plain rock and fractured deposit the arrival radius.
+  One left is timed; none is `foreign` or `out_of_radius`; several or a fifth is `ambiguous`;
+- records a fractured deposit (`rock4_copper` → `rock4_copper_frac`) as a source, since the
+  frac's first area is destroyed before any client holds its instance and its RPC reaches nobody;
+- excludes as `stale` an `ItemDrop` whose `s_spawnTime` stamp is older than the window + 3 s:
+  an old drop re-entering view is a first arrival but not new loot (synced game clock);
+- exports per interval the four slowest timed matches, or every one over 1 s up to eight, as
+  `loot_visibility_witness`.
+
+Send legs decide delay against attribution: on a client, own destruction → own Instantiate and
+Instantiate → first `ZDOData` send to the server (`loot_visibility_owner_*`); on the server,
+first receipt → first send to each other peer (`loot_visibility_server_send_*`), read from the
+peer's sent map after `ZDOMan.SendZDOs`. Both are bounded to 64 drops. If both stay near the
+50 ms tick while the observer still reports >1 s, the tail is attribution.
+
+Not covered: owner-side sources that destroy after dropping (tree, destructible) never match the
+owner leg; a player's own inventory drop near a rock with the same item remains mis-timeable.
 
 ## Candidate, only after the split is measured
 

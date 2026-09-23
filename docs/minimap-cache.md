@@ -21,11 +21,15 @@ Removing the plugin therefore costs one native regeneration on the next join.
 
 ## Key
 
-SHA-256 over: world seed, `m_worldGenVersion`, `Version.GetVersionString()`, plugin version,
-`m_textureSize`, `m_pixelSize`, the three textures' size/format/mip layout, a hash of the IL
-and Harmony patch owners of every game method transitively reachable from `GenerateWorldMap`
-and the `WorldGenerator` constructor/`Pregenerate`/`VersionSetup`/`Initialize`, and the sorted
-set of loaded BepInEx plugin GUIDs and versions. World name is never part of the key.
+SHA-256 over: world seed, `m_worldGenVersion`, `Version.GetVersionString()`, `m_textureSize`,
+`m_pixelSize`, the three textures' size/format/mip layout, a hash of the IL of every game
+method transitively reachable from `GenerateWorldMap` and the `WorldGenerator` constructor/
+`Pregenerate`/`VersionSetup`/`Initialize` plus every Harmony patch attached to each (any
+owner; declaring type, name, priority and an `IlFingerprint` of the patch method), and the
+sorted set of loaded BepInEx plugin GUIDs and versions excluding this plugin's own. World
+name and this plugin's version are never part of the key, so a BetterPerformance release no
+longer invalidates every entry; a patch method Harmony cannot describe falls back to this
+plugin's version for that one patch (`minimap_cache_patch_fingerprint_fallback`).
 
 ## Modes
 
@@ -58,7 +62,8 @@ set of loaded BepInEx plugin GUIDs and versions. World name is never part of the
 
 Labels `minimap_cache_status`, `minimap_cache_mode`, `minimap_cache_result`
 (`miss` | `miss_unverified` | `shadow_match` | `shadow_mismatch` | `verified_hit` |
-`load_failed` | `store_failed` | `key_failed`). Gauges `minimap_cache_native_ms`,
+`load_failed` | `store_failed` | `key_failed`), `minimap_cache_patch_fingerprint_fallback`
+(`true` when some patch fell back to the plugin version for the current key). Gauges `minimap_cache_native_ms`,
 `_load_ms`, `_compare_ms`, `_store_ms`, `_key_ms`, `_entry_bytes` (last serialized entry) and
 attempt/hit/mismatch/failure counters. One BepInEx line per generation.
 

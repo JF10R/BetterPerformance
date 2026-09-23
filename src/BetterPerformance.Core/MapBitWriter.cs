@@ -30,10 +30,22 @@ namespace BetterPerformance.Core
             if (workspace != null && workspace.Busy) return false;
             if (count == 0) return true;
             var buffers = workspace ?? (workspace = new Workspace());
+            bits.CopyTo(buffers.Packed, 0);
+            return TryWritePacked(writer, buffers.Packed, count);
+        }
+
+        // Snapshots already own packed words; do not recreate and copy a BitArray on the worker.
+        public static bool TryWritePacked(BinaryWriter writer, int[]? words, int count)
+        {
+            if (writer == null) throw new ArgumentNullException(nameof(writer));
+            if (words == null || !BitConverter.IsLittleEndian || count < 0 || count > MaximumBits ||
+                (long)words.Length * 32 < count) return false;
+            if (workspace != null && workspace.Busy) return false;
+            if (count == 0) return true;
+            var buffers = workspace ?? (workspace = new Workspace());
             buffers.Busy = true;
             try
             {
-                bits.CopyTo(buffers.Packed, 0);
                 for (int offset = 0; offset < count; offset += ChunkBytes)
                 {
                     int length = Math.Min(ChunkBytes, count - offset);
@@ -41,7 +53,7 @@ namespace BetterPerformance.Core
                     for (int group = 0; group < groups; group++)
                     {
                         int bit = offset + group * 8;
-                        uint word = unchecked((uint)buffers.Packed[bit / 32]);
+                        uint word = unchecked((uint)words[bit / 32]);
                         buffers.Expanded[group] = ExpandedBytes[(word >> (bit % 32)) & 255];
                     }
                     Buffer.BlockCopy(buffers.Expanded, 0, buffers.Output, 0, length);

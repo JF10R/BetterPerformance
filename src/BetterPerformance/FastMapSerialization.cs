@@ -21,6 +21,11 @@ namespace BetterPerformance
         internal static bool Installed { get; private set; }
         internal static string Status { get; private set; } = "disabled";
 
+        // Checked on the main thread before a speculative snapshot leaves it. Install has
+        // verified the original boolean writer; foreign patches require the native loop.
+        internal static bool CanWriteSnapshotBits => Installed &&
+            (Harmony.GetPatchInfo(AccessTools.DeclaredMethod(typeof(ZPackage), "Write", new[] { typeof(bool) }))?.Owners.Count ?? 0) == 0;
+
         internal static void Install(ManualLogSource logger)
         {
             try

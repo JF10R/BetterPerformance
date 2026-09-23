@@ -146,14 +146,15 @@ namespace BetterPerformance
                 !sourceStream.TryGetBuffer(out var sourceBuffer) || !destinationStream.TryGetBuffer(out var destinationBuffer) ||
                 ReferenceEquals(sourceBuffer.Array, destinationBuffer.Array))
             { fallbacks++; destination.WriteCompressed(source); return; }
+            // GetArray's native flush semantics remain observable on hits.
+            sourceWriter.Flush(); sourceStream.Flush();
+            var input = new ArraySegment<byte>(sourceBuffer.Array!, sourceBuffer.Offset, checked((int)sourceStream.Length));
+            long started = Stopwatch.GetTimestamp();
+            MapPrecompression.TryAdoptPending(input);
             busy = true;
             try
             {
-                // GetArray's native flush semantics remain observable on hits.
-                sourceWriter.Flush(); sourceStream.Flush();
-                var input = new ArraySegment<byte>(sourceBuffer.Array!, sourceBuffer.Offset, checked((int)sourceStream.Length));
                 lookups++; inputBytes += input.Count;
-                long started = Stopwatch.GetTimestamp();
                 bool hit = Cache.TryWrite(input, destinationWriter);
                 lookupMs += (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
                 if (hit) { hits++; avoidedBytes += input.Count; if (primed) { primedHits++; primed = false; } return; }
@@ -190,7 +191,7 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("map_cache_native_compression_ms_total", compressionMs, "ms"));
             gauges.Add(new NumberValue("map_cache_retained_bytes", Cache.RetainedBytes, "bytes"));
         }
-        // Speculative publication. Main thread only, never during a save, and only for the
+        // Speculative publication. Main thread only, before a cache lookup, and only for the
         // world the cache is currently keyed to. Adoption takes both arrays by reference, so
         // the caller must have released them; equality still decides every later lookup.
         internal static bool Adopt(byte[] input, byte[] encoded, ZNet? source)

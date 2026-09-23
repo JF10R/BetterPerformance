@@ -50,6 +50,7 @@ namespace BetterPerformance
         private static long attempts, verifiedHits, shadowMatches, shadowMismatches, loadFailures, storeFailures, keyFailures;
         private static double nativeMs, loadMs, compareMs, storeMs, keyMs;
         private static long entryBytes;
+        private static bool patchFingerprintFallback;
 
         internal static bool Installed { get; private set; }
         internal static string Status { get; private set; } = "disabled_at_startup";
@@ -313,7 +314,6 @@ namespace BetterPerformance
             if (world == null) { Status = "no_world"; return null; }
             var material = new StringBuilder();
             material.Append("BetterPerformance/MinimapCache/").Append(MinimapCacheStore.FormatVersion).Append('\n');
-            material.Append("plugin=").Append(Plugin.PluginVersion).Append('\n');
             material.Append("game=").Append(global::Version.GetVersionString()).Append('\n');
             material.Append("seed=").Append(world.m_seed.ToString(CultureInfo.InvariantCulture)).Append('\n');
             material.Append("worldGenVersion=").Append(world.m_worldGenVersion.ToString(CultureInfo.InvariantCulture)).Append('\n');
@@ -323,7 +323,8 @@ namespace BetterPerformance
             material.Append("mask=").Append(Layout(mask)).Append('\n');
             material.Append("height=").Append(Layout(heights)).Append('\n');
             material.Append("methods=").Append(closure.Count.ToString(CultureInfo.InvariantCulture)).Append('\n');
-            material.Append("il=").Append(ClosureHash(closure)).Append('\n');
+            material.Append("il=").Append(ClosureHash(closure, out bool fallback)).Append('\n');
+            patchFingerprintFallback = fallback;
             // An unreadable plugin list must yield no key at all: a fixed placeholder would
             // let two different mod loadouts share one entry.
             string? mods = Plugins();
@@ -341,8 +342,9 @@ namespace BetterPerformance
             texture.mipmapCount.ToString(CultureInfo.InvariantCulture)
         });
 
-        private static string ClosureHash(List<MethodBase> closure)
+        private static string ClosureHash(List<MethodBase> closure, out bool fallback)
         {
+            bool anyFallback = false;
             using (var buffer = new MemoryStream())
             {
                 foreach (var method in closure)
@@ -353,28 +355,31 @@ namespace BetterPerformance
                     byte[] length = BitConverter.GetBytes(il?.Length ?? -1);
                     buffer.Write(length, 0, length.Length);
                     if (il != null && il.Length != 0) buffer.Write(il, 0, il.Length);
-                    // Harmony returns the original IL of a patched method, so patch
-                    // ownership has to enter the key separately.
-                    var owners = Harmony.GetPatchInfo(method)?.Owners;
-                    byte[] patched = Encoding.UTF8.GetBytes(owners == null || owners.Count == 0
-                        ? "|\n" : "|" + string.Join(",", owners.OrderBy(o => o, StringComparer.Ordinal).ToArray()) + "\n");
+                    // Harmony returns the original IL of a patched method, so what a patch
+                    // does to it has to enter the key separately: every patch attached here,
+                    // fingerprinted, in place of the plugin version this used to gate on.
+                    string patchMaterial = PatchFingerprint.Describe(method, Plugin.PluginVersion, out bool methodFallback);
+                    if (methodFallback) anyFallback = true;
+                    byte[] patched = Encoding.UTF8.GetBytes("|" + patchMaterial + "\n");
                     buffer.Write(patched, 0, patched.Length);
                 }
+                fallback = anyFallback;
                 return Hash(buffer.ToArray());
             }
         }
 
         private static string? Plugins()
         {
-            var names = new List<string>();
+            var mods = new List<KeyValuePair<string, string>>();
             try
             {
                 foreach (var info in Chainloader.PluginInfos)
-                    names.Add(info.Key + "@" + (info.Value?.Metadata?.Version?.ToString() ?? "?"));
+                    mods.Add(new KeyValuePair<string, string>(info.Key, info.Value?.Metadata?.Version?.ToString() ?? "?"));
             }
             catch (Exception) { return null; }
-            names.Sort(StringComparer.Ordinal);
-            return Hash(Encoding.UTF8.GetBytes(string.Join("\n", names.ToArray())));
+            // Another mod's GUID@version must still move the key; a release of this plugin
+            // must not, now that its patches are fingerprinted directly.
+            return Hash(Encoding.UTF8.GetBytes(CacheKeyMaterial.DescribeMods(mods, Plugin.PluginId)));
         }
 
         private static string Hash(byte[] material)
@@ -559,6 +564,7 @@ namespace BetterPerformance
             labels.Add(new TextValue("minimap_cache_enabled", Enabled ? "true" : "false"));
             labels.Add(new TextValue("minimap_cache_mode", Mode));
             labels.Add(new TextValue("minimap_cache_result", Result));
+            labels.Add(new TextValue("minimap_cache_patch_fingerprint_fallback", patchFingerprintFallback ? "true" : "false"));
             if (attempts == 0) return;
             labels.Add(new TextValue("minimap_cache_semantics", "cumulative_since_start; entry_bytes_is_last_entry; native_ms_excludes_verified_hits; inclusive_elapsed_not_CPU"));
             gauges.Add(new NumberValue("minimap_cache_attempts", attempts, "calls"));
@@ -582,6 +588,7 @@ namespace BetterPerformance
             Installed = false;
             pendingStore = false;
             pendingKey = null;
+            patchFingerprintFallback = false;
         }
     }
 }

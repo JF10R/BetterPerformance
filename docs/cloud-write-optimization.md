@@ -43,5 +43,26 @@ confirm the map, pins and stats are intact.
 
 Chunk bytes, chunk count, write order, the `.old` rotation, quota checks, backup rotation,
 and the map serialization and `ZPackage` build that stay on the main thread. It is an
-allocation fix only; the remaining `CharacterSaveToDisk` cost is unmeasured here.
-`cloud_write_bytes` is payload, not Steam quota. No file names are exported.
+allocation fix only. `cloud_write_bytes` is payload, not Steam quota. No file names are
+exported.
+
+## Phase attribution inside CharacterSaveToDisk
+
+`[Diagnostics] CharacterSaveDiskPhases` defaults to `true` and requires restart. It breaks
+`PlayerProfile.SavePlayerToDisk` into the phases below, attributed only while that call is
+on the stack on its own thread; `ZPackage.GenerateHash`/`GetArray` and `FileWriter` also
+serve the world-save path and are excluded there by the same scope flag.
+
+| Timing | Native scope | Interpretation |
+| --- | --- | --- |
+| `CharacterSaveCloudChecks` | `SaveSystem.PreSaveCloudChecksAndOperations` | Cloud quota check and pending move/backup decision |
+| `CharacterSaveHash` | `ZPackage.GenerateHash` | `GetArray` copy plus `SHA512.ComputeHash` over the built package |
+| `CharacterSaveWrite` | `FileWriter` construction through `Finish` | Spans the inline `m_binary.Write` calls between them: local file flush or the cloud chunk upload |
+| `CharacterSaveReplace` | `FileHelpers.ReplaceOldFile` | `.old` rotation and the atomic rename/move into place |
+| `CharacterSaveBackup` | `ZNet.ConsiderAutoBackup` | Auto-backup interval check, and the copy itself when due |
+
+These are sequential, not nested, so summing them approximates (never exceeds) the parent
+`CharacterSaveToDisk` total; the gap is the ZPackage build (stat/world-data serialization)
+and the second `GetArray` call, neither separately timed. Gauges: `character_save_package_bytes`
+(interval max of the written package length) and label `character_save_file_source`
+(`local`/`cloud`/`none` when no save completed that interval).

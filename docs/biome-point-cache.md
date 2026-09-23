@@ -23,11 +23,15 @@ object, and the game already calls those from `HeightmapBuilder`'s worker thread
 
 A prefix/postfix pair on `AltBiomeWorldData.GenerateBiomePoints(World)`.
 
-- Key: SHA-256 over plugin version, `Version.GetVersionString()`, `m_seed`, `m_seedName`,
-  `m_uid`, `m_worldGenVersion`, the grid size, the `IlFingerprint` of every `WorldGenerator`
-  method and constructor plus `GenerateBiomePoints`/`MapSpaceToWorldSpace`, the Harmony
-  owners on each, and the sorted BepInEx plugin set. Any unreadable component yields no key
-  and native generation runs (`biome_cache_result=key_failed`).
+- Key: SHA-256 over `Version.GetVersionString()`, `m_seed`, `m_seedName`, `m_uid`,
+  `m_worldGenVersion`, the grid size, the `IlFingerprint` of every `WorldGenerator` method and
+  constructor plus `GenerateBiomePoints`/`MapSpaceToWorldSpace`, every Harmony patch attached
+  to each (any owner; declaring type, name, priority and an `IlFingerprint` of the patch
+  method), and the sorted BepInEx plugin set excluding this plugin's own GUID. This plugin's
+  version is never part of the key, so a BetterPerformance release no longer invalidates
+  every entry; a patch method Harmony cannot describe falls back to this plugin's version for
+  that one patch (`biome_cache_patch_fingerprint_fallback`). Any other unreadable component
+  yields no key and native generation runs (`biome_cache_result=key_failed`).
 - Postfix, after native generation: serialize `world.m_biomeData` through the game's own
   `Save(BinaryWriter)` on the main thread (~21 MiB), then on a worker compare with the stored
   entry: absent → stored unverified; identical → promoted to verified; different → stored
@@ -45,8 +49,9 @@ does the first two and never serves.
 
 - Served bytes were produced by this game binary on this machine and reproduced identically on
   a later load under the same key. The module never invents or transforms a point.
-- The key changes whenever the seed, the world identity, the game or plugin version, any
-  `WorldGenerator` method's IL, a Harmony patch on one, or the mod set changes.
+- The key changes whenever the seed, the world identity, the game version, any
+  `WorldGenerator` method's IL, a Harmony patch's fingerprint on one, or the mod set
+  (excluding this plugin) changes. It does not change on a BetterPerformance release alone.
 - `GenerateSectors` and everything after it run native on both paths.
 - Any exception on the main-thread path disables the module for the process
   (`biome_cache_status=failed_<type>`); the worker's failures only count.
@@ -56,7 +61,8 @@ does the first two and never serves.
 
 Labels `biome_cache_status`, `biome_cache_mode`, `biome_cache_enabled`, `biome_cache_result`
 (`verified_hit`, `miss`, `miss_unverified`, `stored`, `promoted`, `verified_match`, `mismatch`,
-`key_failed`, `load_failed_*`, `store_failed_*`). Gauges `biome_cache_hits`, `_misses`,
+`key_failed`, `load_failed_*`, `store_failed_*`), `biome_cache_patch_fingerprint_fallback`
+(`true` when some patch fell back to the plugin version for the current key). Gauges `biome_cache_hits`, `_misses`,
 `_misses_unverified`, `_stored`, `_promoted`, `_mismatches`, `_key_failures`, `_load_failures`,
 `_store_failures`, `_key_ms`, `_load_ms_max`, `_store_ms_max`. Read them beside
 `loading_biome_GenerateBiomePoints_last`: a hit should replace ~4-5 s with the load time.

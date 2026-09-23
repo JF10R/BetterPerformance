@@ -98,6 +98,9 @@ LOOT_VISIBILITY_BUCKETS = ('16', '32', '64', '128', '256', '512', '1024', 'over'
 def loot_visibility_report(records):
     windows = observed_windows(records)
     statuses = label_values(windows, 'loot_visibility_status')
+    loot_windows = [(gauges, labels) for gauges, labels in windows
+                    if any(name.startswith('loot_visibility_') for name in gauges)
+                    or 'loot_visibility_attribution' in labels]
     legs = [('network', 'chunk disappears → item ZDO arrives'),
             ('creation', 'item ZDO arrives → item object created'),
             ('perceived', 'chunk disappears → item object created')]
@@ -107,20 +110,42 @@ def loot_visibility_report(records):
     output = ['### Loot visibility', '',
               'Three timestamps on this process\'s clock only. Attribution joins a destroyed hit area to a drop by '
               'position and time, never by identity, so a nearby unrelated drop can be attributed and a distant one '
-              'is counted as unattributed instead. Every duration is a lower bound: the first timestamp is when the '
-              'destruction was observed locally, not when the server applied it. An absent arrival means the local '
-              'process created that drop itself and is the expected control case, not a missing measurement.', '']
+              'is counted as unattributed instead. A duration is a lower bound only if the source association is correct: '
+              'the first timestamp is when the destruction was observed locally, not when the server applied it. '
+              'An absent arrival does not prove local creation: network observations can also be skipped or expire.', '']
+    policies = {labels.get('loot_visibility_attribution') for _, labels in loot_windows}
+    if loot_windows and policies == {LOOT_V3}:
+        output += ['Attribution v3: a network arrival keeps up to four nearby destructions, never one this process '
+                   'owned (its drops are created locally). At creation only sources whose drop table holds the item '
+                   'and whose own spawn radius covers the arrival remain; exactly one is timed. A single survivor still '
+                   'does not prove causality. Foreign, out-of-radius, owned-only and ambiguous drops are excluded.', '']
+    elif loot_windows and policies == {LOOT_V2}:
+        output += ['Attribution v2: only observed network arrivals with a single eligible destruction enter the '
+                   'timings. The source timestamp is frozen at arrival. Missing arrivals, ambiguous sources and '
+                   'invalid chronology are excluded, never counted as fast observations. A single candidate still '
+                   'does not prove causality. Local creation latency is unavailable.', '']
+    elif loot_windows and policies == {LOOT_V2, LOOT_V3}:
+        output += ['Mixed v2/v3 attribution: the totals below combine both. v2 windows can pair a network drop with '
+                   'this process\'s own destruction or with a source that cannot spawn it, so read the tail from v3 '
+                   'windows and their witnesses only.', '']
+    else:
+        output += ['Legacy or mixed attribution: timing totals may include drops without a network arrival and '
+                   'sources selected again at creation. These can match an old nearby destruction; do not interpret '
+                   'their long tail as proven network delay. Compare only captures with the same attribution policy.', '']
     if statuses:
         output += ['Probe status: ' + cell(', '.join(statuses)) + '.', '']
-    output += ['| Leg | Observations | Mean ms | Max ms |', '| --- | ---: | ---: | ---: |']
-    for leg, description in legs:
-        count = counts[leg]
-        total = summed(windows, f'loot_visibility_{leg}_sum')
-        peak = extent(windows, f'loot_visibility_{leg}_max')
-        mean = f'{total / count:.3f}' if count and total is not None else 'unavailable'
-        output.append(f'| {cell(description)} | {exact(count or 0)} | {mean} | '
-                      + (f'{peak[1]:.3f}' if count and peak else 'unavailable') + ' |')
-    output.append('')
+    if any(counts[leg] is not None for leg, _ in legs) or not label_values(windows, 'loot_visibility_legs_status'):
+        output += ['| Leg | Observations | Mean ms | Max ms |', '| --- | ---: | ---: | ---: |']
+        for leg, description in legs:
+            count = counts[leg]
+            total = summed(windows, f'loot_visibility_{leg}_sum')
+            peak = extent(windows, f'loot_visibility_{leg}_max')
+            mean = f'{total / count:.3f}' if count and total is not None else 'unavailable'
+            output.append(f'| {cell(description)} | {exact(count or 0)} | {mean} | '
+                          + (f'{peak[1]:.3f}' if count and peak else 'unavailable') + ' |')
+        output.append('')
+    else:
+        output += ['Observer timings: not measured by this process (a dedicated server observes no chunk).', '']
     histogram = [(name, summed(windows, 'loot_visibility_perceived_bucket_' + name)) for name in LOOT_VISIBILITY_BUCKETS]
     histogram = [(name, value) for name, value in histogram if value is not None]
     if histogram:
@@ -128,16 +153,28 @@ def loot_visibility_report(records):
                    + '; '.join(f'≤{name}={exact(value)}' if name != 'over' else f'>1024={exact(value)}'
                                for name, value in histogram) + '.', '']
     accounting = [('loot_visibility_unattributed', 'drops matched to no destruction'),
-                  ('loot_visibility_arrival_missing', 'matched drops created locally (no network arrival)'),
+                  ('loot_visibility_arrival_missing', 'drops without an observed network arrival'),
+                  ('loot_visibility_ambiguous', 'drops with multiple eligible destructions (excluded)'),
                   ('loot_visibility_locally_owned', 'matched drops this process owns'),
                   ('loot_visibility_destruction_overflow', 'destructions overwritten while still live'),
                   ('loot_visibility_arrival_capacity_skips', 'arrivals dropped at capacity'),
-                  ('loot_visibility_non_monotonic', 'durations clamped to zero by a backward clock'),
+                  ('loot_visibility_non_monotonic', 'invalid chronology observations (excluded in v2)'),
                   ('loot_visibility_unknown_prefabs', 'unclassified prefabs'),
                   ('loot_visibility_destroyed_rock', 'rocks destroyed (t0 events)'),
                   ('loot_visibility_destroyed_tree', 'trees felled (t0 events)'),
                   ('loot_visibility_destroyed_log', 'logs destroyed (t0 events)'),
                   ('loot_visibility_destroyed_destructible', 'destructibles with drops destroyed (t0 events)'),
+                  ('loot_visibility_destroyed_fracture', 'deposits fractured into a mineable rock (t0 events)'),
+                  ('loot_visibility_foreign', 'drops no candidate\'s drop table can spawn (v3, excluded)'),
+                  ('loot_visibility_out_of_radius', 'drops outside every matching source\'s spawn radius (v3, excluded)'),
+                  ('loot_visibility_owned_only', 'network drops near only this process\'s own destructions (v3, excluded)'),
+                  ('loot_visibility_owned_source_excluded', 'network drops that had an own destruction removed as candidate (v3)'),
+                  ('loot_visibility_candidates_truncated', 'drops with more than four candidates (v3, excluded as ambiguous)'),
+                  ('loot_visibility_stale', 'old drops re-entering view, by spawn stamp (v3, excluded)'),
+                  ('loot_visibility_perceived_over_1s', 'timed drops over one second'),
+                  ('loot_visibility_witness_overflow', 'drops over one second beyond the witness bound'),
+                  ('loot_visibility_area_centre_fallbacks', 'area destructions timed from the rock root (no area bounds)'),
+                  ('loot_visibility_source_empty_tables', 'source prefabs classified with an empty drop table'),
                   ('loot_visibility_probe_failures', 'probe failures')]
     rows = [(label, summed(windows, name)) for name, label in accounting]
     rows = [(label, value) for label, value in rows if value is not None]
@@ -145,11 +182,103 @@ def loot_visibility_report(records):
         output += ['| Accounting | Observed total |', '| --- | ---: |']
         output += [f'| {cell(label)} | {exact(value)} |' for label, value in rows]
         output += ['', 'A skipped or overwritten entry is an unmeasured observation, not a fast one.', '']
+    output += loot_send_legs(windows)
+    output += loot_witnesses(windows)
     population = extent(windows, 'item_drop_instances')
     if population:
         output += [f'Dropped-item population: peak {exact(population[1])} live ItemDrop instances in one interval; '
                    'each one is a rigidbody the physics step pays for.', '']
     return output
+
+
+LOOT_V2 = 'network_arrival_single_candidate_v2'
+LOOT_V3 = 'network_arrival_table_filtered_v3'
+LOOT_LEGS = (('owner_instantiate', 'owner: own destruction → own Instantiate of its drop'),
+             ('owner_send', 'owner: Instantiate → first ZDOData send to the server'),
+             ('server_send', 'server: first receipt → first send to each other peer'))
+
+
+def loot_send_legs(windows):
+    """Owner and server legs; a leg this process did not run has no gauges and no row."""
+    rows = []
+    for leg, description in LOOT_LEGS:
+        count = summed(windows, f'loot_visibility_{leg}_count')
+        if count is None:
+            continue
+        total = summed(windows, f'loot_visibility_{leg}_sum')
+        peak = extent(windows, f'loot_visibility_{leg}_max')
+        slow = summed(windows, f'loot_visibility_{leg}_over_1s')
+        mean = f'{total / count:.3f}' if count and total is not None else 'unavailable'
+        rows.append(f'| {cell(description)} | {exact(count)} | {mean} | '
+                    + (f'{peak[1]:.3f}' if count and peak else 'unavailable') + ' | '
+                    + (exact(slow) if slow is not None else 'unavailable') + ' |')
+    if not rows:
+        return []
+    output = ['Send legs on this process (each on its own clock; a leg not listed was not measured here):', '',
+              '| Leg | Observations | Mean ms | Max ms | Over 1 s |', '| --- | ---: | ---: | ---: | ---: |'] + rows + ['']
+    accounting = []
+    for prefix in ('owner_send', 'server_send'):
+        for suffix, label in (('started', 'drops followed'), ('skipped', 'drops not followed (capacity)'),
+                              ('expired_unsent', 'drops never sent within the window'),
+                              ('peer_slots_full', 'drops retired with every peer slot used'),
+                              ('scan_skipped', 'received ZDOs not classified (scan bound)')):
+            value = summed(windows, f'loot_visibility_{prefix}_{suffix}')
+            if value is not None:
+                accounting.append(f'| {prefix.replace("_", " ")}: {label} | {exact(value)} |')
+    for name, label in (('loot_visibility_owner_unmatched', 'own drops with no single own source'),
+                        ('loot_visibility_owner_ambiguous', 'own drops with several own sources'),
+                        ('loot_visibility_leg_failures', 'send-leg failures')):
+        value = summed(windows, name)
+        if value is not None:
+            accounting.append(f'| {label} | {exact(value)} |')
+    if accounting:
+        output += ['| Send-leg accounting | Observed total |', '| --- | ---: |'] + accounting + ['']
+    return output + ['If both send legs stay near the 50 ms send tick while observer timings exceed a second, the '
+                     'observer tail is attribution, not delivery; a slow leg is the delay\'s location.', '']
+
+
+def parse_loot_witness(entry):
+    """`drop<kind:source,d=m,net=ms,cre=ms,cand=before/after,own=n`; None when malformed."""
+    head, _, rest = entry.strip().partition(',')
+    drop, _, source = head.partition('<')
+    kind, _, source_name = source.partition(':')
+    if not drop or not kind or not source_name:
+        return None
+    fields = dict(part.partition('=')[::2] for part in rest.split(',') if '=' in part)
+    try:
+        before, _, after = fields['cand'].partition('/')
+        return {'drop': drop, 'source': f'{kind}:{source_name}', 'distance': float(fields['d']),
+                'network': float(fields['net']), 'creation': float(fields['cre']),
+                'candidates': f'{int(before)}/{int(after)}', 'owned': int(fields['own'])}
+    except (KeyError, ValueError):
+        return None
+
+
+def loot_witnesses(windows, limit=12):
+    entries, malformed = [], 0
+    for _, labels in windows:
+        text = labels.get('loot_visibility_witness')
+        if not isinstance(text, str):
+            continue
+        for part in text.split(';'):
+            parsed = parse_loot_witness(part)
+            if parsed is None:
+                malformed += 1
+            else:
+                entries.append(parsed)
+    if not entries and not malformed:
+        return []
+    entries.sort(key=lambda row: row['network'] + row['creation'], reverse=True)
+    output = [f'Slowest timed matches ({min(limit, len(entries))} of {len(entries)} witnesses; each interval exports its '
+              'four slowest, or every match over one second up to eight). A witness shows which source a slow drop '
+              'was paired with, not that it caused it.', '',
+              '| Drop | Source | Distance m | Network ms | Creation ms | Candidates before/after table | Own excluded |',
+              '| --- | --- | ---: | ---: | ---: | ---: | ---: |']
+    output += [f'| {cell(row["drop"])} | {cell(row["source"])} | {row["distance"]:.1f} | {row["network"]:.0f} | '
+               f'{row["creation"]:.0f} | {row["candidates"]} | {row["owned"]} |' for row in entries[:limit]]
+    if malformed:
+        output += ['', f'{malformed} malformed witness entries were skipped.']
+    return output + ['']
 
 
 def segment_report(segments):
@@ -546,6 +675,7 @@ def summarize(paths):
         output += loading_details_report(records)
         output += initial_loading_report(records)
         output += simulation_report(records)
+        output += zone_generation_report(records)
         output += attribution_report(records)
         output += engine_report(records)
         output += host_network_report(records)
@@ -710,7 +840,7 @@ SIMULATION_TIMINGS = ('WearBatch', 'WearSupportUpdate', 'HeightmapLateBatch', 'H
 SIMULATION_POPULATIONS = ('population_wear_pieces', 'population_heightmaps',
                           'population_terrain_modifiers_legacy', 'population_slow_update_objects')
 
-ATTRIBUTION_GROUPS = ('prefab_create', 'prefab_send_bytes', 'routed_rpc', 'routed_rpc_target')
+ATTRIBUTION_GROUPS = ('prefab_create', 'prefab_send_bytes', 'direct_rpc', 'routed_rpc', 'routed_rpc_target')
 
 
 def observed_windows(records):
@@ -783,6 +913,36 @@ def simulation_report(records):
     return output
 
 
+def zone_generation_report(records):
+    windows = observed_windows(records)
+    statuses = label_values(windows, 'zone_generation_status')
+    if not statuses:
+        return []
+    output = ['### Zone generation peaks', '',
+              'Each row keeps the phase values of the same slowest SpawnZone call in that mode. '
+              'Inclusive elapsed milliseconds; dungeon time overlaps locations, so do not sum phases. '
+              'Missing phases are unavailable, not zero. Calls include native attempts returning false; '
+              'a true result means a zone instance spawned, not necessarily a newly generated zone.', '',
+              'Probe status: ' + cell(', '.join(statuses)) + '.', '',
+              '| Mode | Calls | >50 ms | Peak ms | Heightmap ms | Locations ms | Vegetation ms | Dungeon ms | Outcome |',
+              '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |']
+    for mode in ('client', 'full', 'ghost', 'unknown'):
+        key = 'zone_generation_' + mode
+        candidates = [(g, labels) for g, labels in windows if numeric(g.get(key + '_peak_ms'))]
+        if not candidates:
+            continue
+        gauges, labels = max(candidates, key=lambda pair: pair[0][key + '_peak_ms'])
+        def phase(suffix):
+            value = gauges.get(key + '_peak' + suffix + '_ms')
+            return f'{value:.3f}' if numeric(value) else 'unavailable'
+        calls, stalls = summed(windows, key + '_calls'), summed(windows, key + '_over_50ms')
+        output.append(f'| {mode} | {exact(calls) if calls is not None else "unavailable"} | '
+                      f'{exact(stalls) if stalls is not None else "unavailable"} | {phase("")} | '
+                      f'{phase("_heightmap")} | {phase("_locations")} | {phase("_vegetation")} | '
+                      f'{phase("_dungeon")} | {cell(labels.get(key + "_peak_outcome", "unknown"))} |')
+    return output + ['']
+
+
 def attribution_report(records):
     groups = {}
     for record in records:
@@ -805,7 +965,10 @@ def attribution_report(records):
               'Keys reading `prefab:<hash>` or `hash:<int>` are unresolved names, and a routed-RPC key can be '
               'the registry handler name rather than the registered name. A `routed_rpc_target` key names the '
               'RPC and its target prefab; it re-reports `routed_rpc` time for the allow-listed RPCs and is not '
-              'additional cost.', '']
+              'additional cost. The `direct_rpc` group times the outer ZRpc dispatcher, including deserialization '
+              'and nested routed RPCs: do not add it to `routed_rpc` or `routed_rpc_target`. '
+              'It reads only the four-byte method identifier and preserves the package cursor. '
+              'Failed calls are included; their counter and skipped headers appear in the capture gauges.', '']
     for group in list(ATTRIBUTION_GROUPS) + sorted(set(groups) - set(ATTRIBUTION_GROUPS)):
         rows = groups.get(group)
         if not rows:

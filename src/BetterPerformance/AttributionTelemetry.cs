@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Reflection;
 using System.Threading;
 using BepInEx.Configuration;
@@ -13,7 +14,7 @@ using UnityEngine;
 
 namespace BetterPerformance
 {
-    // Attributes observed cost to the prefab or routed RPC that caused it. Hooks read
+    // Attributes observed cost to the prefab or RPC that caused it. Hooks read
     // identifiers only: a prefab hash, an RPC method hash, and the written length of a
     // package. No package contents, no player data, no game state is modified.
     internal static class AttributionTelemetry
@@ -28,6 +29,15 @@ namespace BetterPerformance
         private static readonly KeyedAggregator PrefabSendBytes = new KeyedAggregator("prefab_send_bytes", 256, AttributionOrder.Bytes);
         private static readonly KeyedAggregator RoutedRpc = new KeyedAggregator("routed_rpc", 256, AttributionOrder.SumMs);
         private static readonly KeyedAggregator RoutedRpcTarget = new KeyedAggregator("routed_rpc_target", 256, AttributionOrder.SumMs);
+        private static readonly KeyedAggregator DirectRpc = new KeyedAggregator("direct_rpc", 256, AttributionOrder.SumMs);
+        // Method metadata only: never retain a delegate, its target, a peer or a package.
+        private static readonly Dictionary<int, MethodInfo?> DirectHandlers = new Dictionary<int, MethodInfo?>(NameCapacity);
+        private static AccessTools.FieldRef<ZRpc, object>? directFunctions;
+        private static AccessTools.FieldRef<ZPackage, BinaryReader>? packageReader;
+        private static string directRpcStatus = "disabled";
+        private static int directCaptureGeneration;
+        private static long directRpcFailures, directHeaderUnavailable, directPingSkips, directNameCapacitySkips;
+        private static long unresolvedDirectRpcKeys, handlerResolvedDirectRpcKeys;
         private static readonly object NameGate = new object();
         // Composite key -> packed (method hash, prefab hash). Value type entries only, so a
         // warm map records no managed allocation inside the hook.
@@ -74,6 +84,16 @@ namespace BetterPerformance
             internal ZPackage? Package;
         }
 
+        internal struct DirectScope
+        {
+            internal bool Active;
+            internal bool KeyKnown;
+            internal int Key;
+            internal long Started;
+            internal int Generation;
+            internal CaptureSession? Session;
+        }
+
         internal static void Install(ConfigFile config, ManualLogSource logger)
         {
             ConfigureTargetSplit(config);
@@ -87,6 +107,7 @@ namespace BetterPerformance
                     nameof(RoutedBefore), nameof(RoutedAfter));
                 PatchRegistrations(typeof(ZRoutedRpc), logger);
                 PatchRegistrations(typeof(ZRpc), logger);
+                InstallDirectRpc(logger);
                 InstallDamageTextGauge(logger);
                 Installed = true;
                 Status = registerHookFailures == 0 ? "installed" : "installed_partial_names";
@@ -108,6 +129,26 @@ namespace BetterPerformance
             Patches.Patch(method,
                 prefix: new HarmonyMethod(typeof(AttributionTelemetry), prefix),
                 finalizer: new HarmonyMethod(typeof(AttributionTelemetry), finalizer) { priority = Priority.Last });
+        }
+
+        private static void InstallDirectRpc(ManualLogSource logger)
+        {
+            directRpcStatus = "unavailable";
+            try
+            {
+                directFunctions = AccessTools.FieldRefAccess<ZRpc, object>("m_functions");
+                packageReader = AccessTools.FieldRefAccess<ZPackage, BinaryReader>("m_reader");
+                Patch(typeof(ZRpc), "HandlePackage", new[] { typeof(ZPackage) }, typeof(void),
+                    nameof(DirectBefore), nameof(DirectAfter));
+                directRpcStatus = "installed";
+            }
+            catch (Exception exception)
+            {
+                directFunctions = null;
+                packageReader = null;
+                directRpcStatus = "unavailable:" + exception.GetType().Name;
+                logger.LogWarning("Direct RPC attribution unavailable: " + exception.GetType().Name);
+            }
         }
 
         // Ten of the twelve Register overloads are open generic definitions. Harmony
@@ -318,6 +359,61 @@ namespace BetterPerformance
             catch { Interlocked.Increment(ref probeFailures); }
         }
 
+        private static void DirectBefore(ZRpc __instance, ZPackage __0, out DirectScope __state)
+        {
+            __state = default;
+            try
+            {
+                if (directRpcStatus != "installed" || !Observe() || ReferenceEquals(__0, null) || packageReader == null) return;
+                bool known = DirectRpcHeader.TryRead(packageReader(__0), out int hash);
+                if (known && hash == 0) { Interlocked.Increment(ref directPingSkips); return; }
+                if (known) RememberDirectHandler(__instance, hash);
+                else Interlocked.Increment(ref directHeaderUnavailable);
+                __state = new DirectScope
+                {
+                    Active = true,
+                    KeyKnown = known,
+                    Key = hash,
+                    Generation = directCaptureGeneration,
+                    Session = Volatile.Read(ref TimingHooks.Current),
+                    Started = Stopwatch.GetTimestamp()
+                };
+            }
+            catch { Interlocked.Increment(ref probeFailures); __state = default; }
+        }
+
+        // Each invocation owns its state, including nested dispatches. A void finalizer
+        // records failures without replacing the native exception or its catch path.
+        private static void DirectAfter(DirectScope __state, Exception? __exception)
+        {
+            if (!__state.Active || !Enabled || !capturing || __state.Generation != directCaptureGeneration ||
+                !ReferenceEquals(__state.Session, Volatile.Read(ref TimingHooks.Current))) return;
+            try
+            {
+                double ms = (Stopwatch.GetTimestamp() - __state.Started) * 1000.0 / Stopwatch.Frequency;
+                if (__exception != null) Interlocked.Increment(ref directRpcFailures);
+                if (__state.KeyKnown) DirectRpc.Record(__state.Key, ms);
+            }
+            catch { Interlocked.Increment(ref probeFailures); }
+        }
+
+        // A first-seen key resolves metadata before its clock starts. Generic Register
+        // overloads cannot be patched, but their holders still expose the real callback.
+        private static void RememberDirectHandler(ZRpc dispatcher, int hash)
+        {
+            lock (NameGate)
+            {
+                if (DirectHandlers.ContainsKey(hash)) return;
+                if (DirectHandlers.Count >= NameCapacity) { directNameCapacitySkips++; return; }
+                if (directFunctions == null || !(directFunctions(dispatcher) is IDictionary functions)) return;
+                object? registered = functions[hash];
+                // An unknown RPC may become registered later; do not cache its absence.
+                if (registered == null) return;
+                FieldInfo? action = AccessTools.Field(registered.GetType(), "m_action");
+                DirectHandlers[hash] = (action?.GetValue(registered) as Delegate)?.Method;
+            }
+        }
+
         private static bool IsTargetSplit(int methodHash)
         {
             int[] allowed = targetSplitHashes;
@@ -374,13 +470,14 @@ namespace BetterPerformance
         // Names are resolved here, on the main thread, never inside a hook.
         internal static AttributionSummary[] Drain()
         {
-            var rows = new List<AttributionSummary>(TopRows * 4 + 4);
+            var rows = new List<AttributionSummary>(TopRows * 5 + 5);
             try
             {
                 rows.AddRange(PrefabCreate.Drain(TopRows, ResolvePrefab));
                 rows.AddRange(PrefabSendBytes.Drain(TopRows, ResolvePrefab));
                 rows.AddRange(RoutedRpc.Drain(TopRows, ResolveRpc));
                 rows.AddRange(RoutedRpcTarget.Drain(TopRows, ResolveTargetKey));
+                rows.AddRange(DirectRpc.Drain(TopRows, ResolveDirectRpc));
             }
             catch { Interlocked.Increment(ref probeFailures); }
             return rows.ToArray();
@@ -455,6 +552,21 @@ namespace BetterPerformance
             return "hash:" + hash.ToString(CultureInfo.InvariantCulture);
         }
 
+        private static string ResolveDirectRpc(int hash)
+        {
+            lock (NameGate)
+            {
+                if (RpcNames.TryGetValue(hash, out string registeredName)) return registeredName;
+                if (DirectHandlers.TryGetValue(hash, out MethodInfo? handler) && handler != null)
+                {
+                    handlerResolvedDirectRpcKeys++;
+                    return handler.DeclaringType == null ? handler.Name : handler.DeclaringType.Name + "." + handler.Name;
+                }
+            }
+            Interlocked.Increment(ref unresolvedDirectRpcKeys);
+            return "hash:" + hash.ToString(CultureInfo.InvariantCulture);
+        }
+
         // Harmony cannot patch the six generic Register overloads ("The given generic
         // instantiation was invalid"), so most registered names are never observed.
         // The registry keyed by the same hash still holds each handler delegate: its
@@ -496,6 +608,11 @@ namespace BetterPerformance
                 "prefab_and_rpc_identifiers_only; no_payloads; unknown_exports_as_hash_fallback"));
             labels.Add(new TextValue("attribution_rpc_key_source",
                 "registered_name_when_hooked; else_handler_method_name_from_registry; else_hash"));
+            labels.Add(new TextValue("attribution_direct_rpc_status", directRpcStatus));
+            labels.Add(new TextValue("attribution_direct_rpc_scope",
+                "HandlePackage_inclusive_elapsed_ms; includes_deserialization_and_nested_routed_rpc; " +
+                "do_not_sum_with_routed_rpc; four_byte_method_identifier_only; ping_excluded; " +
+                "unavailable_headers_not_attributed; failed_calls_included; names_resolved_before_clock"));
             labels.Add(new TextValue("attribution_target_split_scope",
                 "routed_rpc_target_splits_allow_listed_rpcs_by_target_zdo_prefab; one_zdo_lookup_before_the_clock_starts; " +
                 "duplicates_routed_rpc_time_it_does_not_extend_it; split_rpcs=" + targetSplitNames));
@@ -512,6 +629,15 @@ namespace BetterPerformance
             Add(gauges, "attribution_routed_rpc_target_keys", RoutedRpcTarget.TrackedKeys, "keys");
             Add(gauges, "attribution_routed_rpc_target_dropped_records", RoutedRpcTarget.DroppedRecords, "calls");
             Add(gauges, "attribution_routed_rpc_target_invalid_samples", RoutedRpcTarget.InvalidSamples, "calls");
+            Add(gauges, "attribution_direct_rpc_keys", DirectRpc.TrackedKeys, "keys");
+            Add(gauges, "attribution_direct_rpc_dropped_records", DirectRpc.DroppedRecords, "calls");
+            Add(gauges, "attribution_direct_rpc_invalid_samples", DirectRpc.InvalidSamples, "calls");
+            Add(gauges, "attribution_direct_rpc_failures", Interlocked.Read(ref directRpcFailures), "calls");
+            Add(gauges, "attribution_direct_rpc_header_unavailable", Interlocked.Read(ref directHeaderUnavailable), "calls");
+            Add(gauges, "attribution_direct_rpc_ping_skips", Interlocked.Read(ref directPingSkips), "calls");
+            Add(gauges, "attribution_direct_rpc_name_capacity_skips", Interlocked.Read(ref directNameCapacitySkips), "calls");
+            Add(gauges, "attribution_direct_rpc_unresolved_keys", Interlocked.Read(ref unresolvedDirectRpcKeys), "rows");
+            Add(gauges, "attribution_direct_rpc_handler_resolved_keys", Interlocked.Read(ref handlerResolvedDirectRpcKeys), "rows");
             Add(gauges, "attribution_target_split_rpcs", targetSplitHashes.Length, "rpcs");
             lock (TargetGate) Add(gauges, "attribution_target_split_pairs", TargetPairs.Count, "pairs");
             Add(gauges, "attribution_target_split_pair_capacity_skips", Interlocked.Read(ref targetPairSkips), "pairs");
@@ -524,6 +650,7 @@ namespace BetterPerformance
             {
                 Add(gauges, "attribution_rpc_names_known", RpcNames.Count, "names");
                 Add(gauges, "attribution_prefab_names_cached", PrefabNames.Count, "names");
+                Add(gauges, "attribution_direct_rpc_handlers_cached", DirectHandlers.Count, "keys");
             }
             Add(gauges, "attribution_name_capacity_skips", Interlocked.Read(ref nameCapacitySkips), "names");
             Add(gauges, "attribution_unresolved_prefab_keys", Interlocked.Read(ref unresolvedPrefabKeys), "rows");
@@ -566,10 +693,15 @@ namespace BetterPerformance
         internal static void Reset()
         {
             capturing = false;
+            unchecked { directCaptureGeneration++; }
             PrefabCreate.Reset();
             PrefabSendBytes.Reset();
             RoutedRpc.Reset();
             RoutedRpcTarget.Reset();
+            DirectRpc.Reset();
+            lock (NameGate) DirectHandlers.Clear();
+            directRpcFailures = directHeaderUnavailable = directPingSkips = directNameCapacitySkips = 0;
+            unresolvedDirectRpcKeys = handlerResolvedDirectRpcKeys = 0;
             probeFailures = otherThreadSkips = negativeByteDeltas = 0;
             unresolvedPrefabKeys = unresolvedRpcKeys = nameCapacitySkips = handlerResolvedRpcKeys = 0;
             targetNoneIds = targetMissingZdos = targetUnmappedKeys = 0;
@@ -594,6 +726,9 @@ namespace BetterPerformance
             registerCandidates = registerHooks = registerHookFailures = registerGenericSkips = 0;
             registerFailure = "none";
             routedFunctions = null;
+            directFunctions = null;
+            packageReader = null;
+            directRpcStatus = "disabled";
             Installed = false;
             // Removal must not throw into the game's shutdown path; a refused unpatch
             // leaves inert hooks behind and is reported instead of propagating.

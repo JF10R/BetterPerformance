@@ -62,6 +62,30 @@ class NewTelemetrySummaryTests(unittest.TestCase):
 
     # --- base simulation -------------------------------------------------------
 
+    def test_zone_generation_keeps_phases_of_same_peak(self):
+        self.records[1]['labels'] = labels(zone_generation_status='installed',
+            zone_generation_full_peak_outcome='returned_true')
+        self.records[1]['gauges'] = gauges(zone_generation_full_calls=2,
+            zone_generation_full_over_50ms=1, zone_generation_full_peak_ms=100,
+            zone_generation_full_peak_vegetation_ms=80)
+        self.records[2]['labels'] = labels(zone_generation_status='installed',
+            zone_generation_full_peak_outcome='exception')
+        self.records[2]['gauges'] = gauges(zone_generation_full_calls=1,
+            zone_generation_full_over_50ms=1, zone_generation_full_peak_ms=200,
+            zone_generation_full_peak_vegetation_ms=20)
+        report = self.render()
+        self.assertIn('| full | 3 | 2 | 200.000 | unavailable | unavailable | 20.000 | unavailable | exception |', report)
+        self.assertNotIn('| full | 3 | 2 | 200.000 | unavailable | unavailable | 80.000 |', report)
+        self.assertIn('do not sum phases', report)
+
+    def test_direct_rpc_is_inclusive_of_nested_routed_work(self):
+        self.records[1]['attributions'] = [dict(group='direct_rpc', key='CaptureRelay.OnChunk',
+            count=2, sumMs=1250, maxMs=1200, bytes=0)]
+        report = self.render()
+        self.assertIn('`direct_rpc`', report)
+        self.assertIn('| CaptureRelay.OnChunk | 2 | 1250.000 | 1200.000 | 0 |', report)
+        self.assertIn('do not add it to `routed_rpc`', report)
+
     def test_base_simulation_rows_skip_zero_calls_and_state_inclusive_semantics(self):
         self.records[1]["timings"] += [
             {"name": "WearBatch", "count": 4, "sumMs": 40, "maxMs": 22,
