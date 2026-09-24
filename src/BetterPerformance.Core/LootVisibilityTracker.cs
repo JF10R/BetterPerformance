@@ -7,7 +7,9 @@ namespace BetterPerformance.Core
     // game does not link them. v3 freezes up to four candidates at arrival, excluding any
     // source this process owned (its drops are local, never network arrivals). At creation
     // only candidates whose drop table holds the item and whose own radius covers it are
-    // kept; exactly one left is timed. Single-threaded.
+    // kept; exactly one left is timed. v4 adds a bounded look-back: a remote destruction
+    // also becomes a candidate of arrivals that preceded it by at most the look-back, since
+    // a drop's ZDO can arrive before its source's removal. Single-threaded.
     public sealed class LootVisibilityTracker<TKey> where TKey : notnull
     {
         public const int BucketCount = 8;
@@ -37,6 +39,17 @@ namespace BetterPerformance.Core
             internal double X, Y, Z, AtMs, Radius, DistanceSquared;
             internal int Source;
             internal byte Kind;
+            // Recorded after the arrival, through the look-back.
+            internal bool Late;
+        }
+
+        // A recent arrival, kept whatever was near it, until the look-back or a newer entry
+        // replaces it. Consumed once its drop is created.
+        private struct Recent
+        {
+            internal TKey Key;
+            internal double AtMs, X, Y, Z;
+            internal bool Occupied, Consumed;
         }
 
         // Candidates inline so an arrival allocates nothing beyond its dictionary slot.
@@ -70,6 +83,12 @@ namespace BetterPerformance.Core
             // Owner side: own destruction to own Instantiate of a matching drop.
             public long OwnerInstantiateCount, OwnerUnmatched, OwnerAmbiguous;
             public double OwnerInstantiateSumMs, OwnerInstantiateMaxMs;
+            // v4: timed matches whose arrival preceded their destruction. They enter the
+            // perceived timings only (t2 - t0 >= 0), never the network or creation legs.
+            // LeadMax is how long before t0 the earliest one arrived; Overwritten counts
+            // look-back entries replaced while still inside the look-back.
+            public long ArrivedBeforeDestroy, LookBackOverwritten;
+            public double ArrivedBeforeDestroyLeadMaxMs;
             public int PendingDestructions, PendingArrivals;
             // One histogram of the perceived duration; null only on a default instance.
             public long[] PerceivedBuckets;
@@ -83,20 +102,26 @@ namespace BetterPerformance.Core
         private readonly long[] buckets = new long[BucketCount];
         private readonly Witness[] witnesses = new Witness[WitnessCapacity];
         private readonly Func<int, int, bool>? canSpawn;
-        private readonly double radius, radiusSquared, windowMs;
+        private readonly double radius, radiusSquared, windowMs, lookBackMs;
         private readonly int arrivalCapacity;
-        private int head, active, witnessCount;
+        private readonly Recent[] recent;
+        private int head, active, witnessCount, recentHead;
         private Summary interval;
 
         // canSpawn(sourcePrefab, dropPrefab) answers the drop-table question; null accepts
         // every pair, which is the v2 rule and what a source without a table relies on.
+        // lookBackCapacity 0 disables the v4 look-back (the v3 rule).
         public LootVisibilityTracker(int destructionCapacity, int arrivalCapacity, double radiusMetres, double windowMs,
-            Func<int, int, bool>? canSpawn = null)
+            Func<int, int, bool>? canSpawn = null, int lookBackCapacity = 0, double lookBackMs = 0)
         {
             if (destructionCapacity < 1 || destructionCapacity > 4096) throw new ArgumentOutOfRangeException(nameof(destructionCapacity));
             if (arrivalCapacity < 1 || arrivalCapacity > 16384) throw new ArgumentOutOfRangeException(nameof(arrivalCapacity));
             if (!(radiusMetres > 0) || double.IsInfinity(radiusMetres)) throw new ArgumentOutOfRangeException(nameof(radiusMetres));
             if (!(windowMs > 0) || double.IsInfinity(windowMs)) throw new ArgumentOutOfRangeException(nameof(windowMs));
+            if (lookBackCapacity < 0 || lookBackCapacity > 4096) throw new ArgumentOutOfRangeException(nameof(lookBackCapacity));
+            if (lookBackCapacity > 0 && (!(lookBackMs > 0) || lookBackMs > windowMs)) throw new ArgumentOutOfRangeException(nameof(lookBackMs));
+            recent = new Recent[lookBackCapacity];
+            this.lookBackMs = lookBackCapacity > 0 ? lookBackMs : 0;
             destructions = new Destruction[destructionCapacity];
             this.arrivalCapacity = arrivalCapacity;
             arrivals = new Dictionary<TKey, Arrival>(arrivalCapacity);
@@ -130,15 +155,48 @@ namespace BetterPerformance.Core
                 Radius = Math.Min(radiusMetres, radius), Source = sourcePrefab, Kind = kind
             };
             head = (head + 1) % destructions.Length;
+            // An owned source's drops are local, never network arrivals.
+            if (!owned && recent.Length > 0) LookBack(destructions[(head + destructions.Length - 1) % destructions.Length], nowMs);
+        }
+
+        // Joins this remote destruction to every recent arrival it may have spawned: each
+        // one gains it as a late candidate, and one never stored is stored now.
+        private void LookBack(Destruction entry, double nowMs)
+        {
+            for (int i = 0; i < recent.Length; i++)
+            {
+                var early = recent[i];
+                if (!early.Occupied || early.Consumed || nowMs < early.AtMs || nowMs - early.AtMs > lookBackMs) continue;
+                double distance = DistanceSquared(entry.X, entry.Y, entry.Z, early.X, early.Y, early.Z);
+                if (distance > radiusSquared) continue;
+                var candidate = new Candidate
+                {
+                    X = entry.X, Y = entry.Y, Z = entry.Z, AtMs = entry.AtMs, Radius = entry.Radius,
+                    DistanceSquared = distance, Source = entry.Source, Kind = entry.Kind, Late = true
+                };
+                if (arrivals.TryGetValue(early.Key, out var arrival))
+                {
+                    Keep(ref arrival, candidate);
+                    arrivals[early.Key] = arrival;
+                    continue;
+                }
+                if (arrivals.Count >= arrivalCapacity) { interval.ArrivalCapacitySkipped++; continue; }
+                arrival = new Arrival { AtMs = early.AtMs, X = early.X, Y = early.Y, Z = early.Z };
+                Keep(ref arrival, candidate);
+                arrivals.Add(early.Key, arrival);
+            }
         }
 
         // The prefab is not deserialized at the arrival point, so an arrival is kept only
-        // when a live destruction is near it. Everything else is dropped without storage.
+        // when a live destruction is near it; with the look-back on, every arrival is also
+        // remembered briefly in a fixed ring in case its destruction is observed after it.
         public bool Arrived(TKey key, double x, double y, double z, double nowMs)
         {
             ValidateTime(nowMs);
             ValidatePoint(x, y, z);
             if (arrivals.ContainsKey(key)) return true;
+            if (recent.Length > 0) Remember(key, x, y, z, nowMs);
+            if (active == 0) return false;
             var arrival = new Arrival { AtMs = nowMs, X = x, Y = y, Z = z };
             for (int i = 0; i < destructions.Length; i++)
             {
@@ -172,6 +230,8 @@ namespace BetterPerformance.Core
             ownerMatched = false;
             ValidateTime(nowMs);
             ValidatePoint(x, y, z);
+            // Classified now, so a later destruction must not store it again.
+            if (recent.Length > 0) Consume(key);
             if (!arrivals.TryGetValue(key, out var arrival))
             {
                 if (Nearest(x, y, z, nowMs) < 0) interval.Unattributed++;
@@ -216,19 +276,30 @@ namespace BetterPerformance.Core
             if (near > 1) { interval.Ambiguous++; return false; }
             // One destroyed hit area drops several items, so the destruction stays live
             // until the window expires instead of being consumed by the first drop.
-            double perceived = nowMs - match.AtMs;
+            // A late source was recorded before this call, so perceived is never negative;
+            // the guard only keeps a clock fault out of the sums.
+            double perceived = Math.Max(0, nowMs - match.AtMs);
             interval.PerceivedCount++;
             interval.PerceivedSumMs += perceived;
             interval.PerceivedMaxMs = Math.Max(interval.PerceivedMaxMs, perceived);
             buckets[Bucket(perceived)]++;
+            // Negative for a late source: shown in its witness, kept out of the leg sums.
             double network = arrival.AtMs - match.AtMs;
             double creation = nowMs - arrival.AtMs;
-            interval.NetworkCount++;
-            interval.NetworkSumMs += network;
-            interval.NetworkMaxMs = Math.Max(interval.NetworkMaxMs, network);
-            interval.CreationCount++;
-            interval.CreationSumMs += creation;
-            interval.CreationMaxMs = Math.Max(interval.CreationMaxMs, creation);
+            if (match.Late)
+            {
+                interval.ArrivedBeforeDestroy++;
+                interval.ArrivedBeforeDestroyLeadMaxMs = Math.Max(interval.ArrivedBeforeDestroyLeadMaxMs, -network);
+            }
+            else
+            {
+                interval.NetworkCount++;
+                interval.NetworkSumMs += network;
+                interval.NetworkMaxMs = Math.Max(interval.NetworkMaxMs, network);
+                interval.CreationCount++;
+                interval.CreationSumMs += creation;
+                interval.CreationMaxMs = Math.Max(interval.CreationMaxMs, creation);
+            }
             if (perceived > SlowMs) interval.PerceivedOverOneSecond++;
             Witnessed(new Witness
             {
@@ -278,7 +349,24 @@ namespace BetterPerformance.Core
             }
             Array.Clear(destructions, 0, destructions.Length);
             arrivals.Clear();
-            head = active = 0;
+            Array.Clear(recent, 0, recent.Length);
+            head = active = recentHead = 0;
+        }
+
+        private void Remember(TKey key, double x, double y, double z, double nowMs)
+        {
+            var replaced = recent[recentHead];
+            if (replaced.Occupied && !replaced.Consumed && nowMs >= replaced.AtMs && nowMs - replaced.AtMs <= lookBackMs)
+                interval.LookBackOverwritten++;
+            recent[recentHead] = new Recent { Key = key, AtMs = nowMs, X = x, Y = y, Z = z, Occupied = true };
+            recentHead = (recentHead + 1) % recent.Length;
+        }
+
+        private void Consume(TKey key)
+        {
+            var comparer = EqualityComparer<TKey>.Default;
+            for (int i = 0; i < recent.Length; i++)
+                if (recent[i].Occupied && comparer.Equals(recent[i].Key, key)) recent[i].Consumed = true;
         }
 
         public void Expire(double nowMs)
@@ -300,7 +388,8 @@ namespace BetterPerformance.Core
         }
 
         // The owner's drops appear in the frame of its own destruction, at the kind's spawn
-        // spread. Destructions recorded after their drops (tree, destructible) never match.
+        // spread. The caller must record a destruction before its drops (v4 does for tree,
+        // destructible and plain rock); one recorded after them never matches.
         private bool MatchOwner(double x, double y, double z, double nowMs, int dropPrefab)
         {
             int matches = 0;

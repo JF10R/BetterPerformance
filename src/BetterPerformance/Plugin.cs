@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.15";
+        public const string PluginVersion = "0.4.16";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -103,6 +103,8 @@ namespace BetterPerformance
             // generation while no peer is connected (dedicated server).
             HeightmapRebuildBudget.Install(Config, Logger);
             IdleZonePregeneration.Install(Config, Logger);
+            // 0.4.16 opt-in: the native hourly unused-asset unload moves out of play.
+            AssetUnloadDeferral.Install(Config, Logger);
             new Terminal.ConsoleCommand("bp_budget", "Experimental object budget: on | off | status (installed at startup; local process only)",
                 (Terminal.ConsoleEvent)(args =>
                 {
@@ -286,6 +288,7 @@ namespace BetterPerformance
                     segment = 0;
                 }
                 MapPrecompression.Pump();
+                AssetUnloadDeferral.Pump();
                 LoadingTelemetry.Enabled = captureEnabled.Value && !loadingPaused && LoadingTelemetry.Installed;
                 LoadingDetailsTelemetry.Enabled = captureEnabled.Value && !loadingPaused && LoadingDetailsTelemetry.Installed;
                 if (!captureEnabled.Value) { continuePending = false; if (current != null) StopCapture("disabled"); return; }
@@ -351,7 +354,7 @@ namespace BetterPerformance
                 new TextValue("mode", ObjectCreationBudget.Installed || InitialLoadingOptimization.Installed || FastMapSerialization.Installed || MapCompressionCache.Installed || PackageCopyOptimization.Installed
                     || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || BiomePointCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || SectorInvalidationFix.Enabled || NetworkFlow.Enabled || NetworkCompression.Enabled
                     || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled || DungeonSpawnSlicing.Enabled || MapPrecompression.Installed
-                    || HeightmapRebuildBudget.Enabled || IdleZonePregeneration.Installed
+                    || HeightmapRebuildBudget.Enabled || IdleZonePregeneration.Installed || AssetUnloadDeferral.Installed
                     ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
                 new TextValue("map_serialization_status", FastMapSerialization.Status),
                 new TextValue("queue_semantics", "socket API result; active mods may adjust it or make it negative"),
@@ -400,6 +403,7 @@ namespace BetterPerformance
             ZoneGenerationTelemetry.Reset();
             HeightmapRebuildBudget.Reset();
             IdleZonePregeneration.Reset();
+            AssetUnloadDeferral.Reset();
             CharacterSaveDiskTelemetry.Reset();
             RenderTelemetry.Reset();
             EngineTelemetry.Reset();
@@ -453,6 +457,7 @@ namespace BetterPerformance
             GameplayTelemetry.Sample(gauges, labels);
             ZoneGenerationTelemetry.Sample(gauges, labels);
             IdleZonePregeneration.Sample(gauges, labels);
+            AssetUnloadDeferral.Sample(gauges, labels);
             HeightmapRebuildBudget.Sample(gauges, labels);
             CharacterSaveDiskTelemetry.Sample(gauges, labels);
             AttributionTelemetry.Sample(gauges, labels);
@@ -566,7 +571,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { ZoneGenerationTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { IdleZonePregeneration.Sample(gauges, labels); }
+            try { IdleZonePregeneration.Sample(gauges, labels); AssetUnloadDeferral.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { HeightmapRebuildBudget.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -631,6 +636,7 @@ namespace BetterPerformance
             ZoneGenerationTelemetry.Uninstall();
             HeightmapRebuildBudget.Uninstall();
             IdleZonePregeneration.Uninstall();
+            AssetUnloadDeferral.Uninstall();
             CharacterSaveDiskTelemetry.Uninstall();
             AttributionTelemetry.Uninstall();
             LoadingTelemetry.Uninstall();

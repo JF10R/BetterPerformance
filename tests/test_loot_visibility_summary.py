@@ -172,6 +172,35 @@ class LootVisibilitySummaryTests(unittest.TestCase):
         self.assertIn('| chunk disappears → item object created | 2 | 2030.000 | 4000.000 |', report)
         self.assertIn("(v3, excluded) | 1 |", report)
 
+    def test_v4_arrivals_before_destroy_are_named(self):
+        self.records[1]['labels'] = labels(loot_visibility_attribution=summary.LOOT_V4,
+                                           loot_visibility_legs_status='installed')
+        self.records[1]['gauges'] = gauges(loot_visibility_perceived_count=2, loot_visibility_perceived_sum=50,
+                                           loot_visibility_perceived_max=30, loot_visibility_network_count=1,
+                                           loot_visibility_network_sum=15, loot_visibility_network_max=15,
+                                           loot_visibility_arrived_before_destroy=1,
+                                           loot_visibility_arrived_before_destroy_lead_max=12.5,
+                                           loot_visibility_look_back_overwritten=4)
+        report = self.render()
+        self.assertIn('Attribution v4:', report)
+        self.assertNotIn('Legacy or mixed attribution', report)
+        self.assertIn('| timed drops that arrived before their destruction (v4, perceived only) | 1 |', report)
+        self.assertIn('| arrivals replaced in the look-back ring while still eligible (v4) | 4 |', report)
+        self.assertIn('Earliest arrival before its destruction: 12.500 ms', report)
+        self.assertIn('| chunk disappears → item ZDO arrives | 1 | 15.000 | 15.000 |', report)
+
+    def test_mixed_v3_and_v4_windows_warn(self):
+        self.records[1]['labels'] = labels(loot_visibility_attribution=summary.LOOT_V3)
+        self.records[1]['gauges'] = gauges(loot_visibility_perceived_count=1, loot_visibility_perceived_sum=3000,
+                                           loot_visibility_perceived_max=3000)
+        self.records[2]['labels'] = labels(loot_visibility_attribution=summary.LOOT_V4)
+        self.records[2]['gauges'] = gauges(loot_visibility_perceived_count=1, loot_visibility_perceived_sum=40,
+                                           loot_visibility_perceived_max=40)
+        report = self.render()
+        self.assertIn('Mixed v3/v4 attribution', report)
+        self.assertNotIn('Attribution v4:', report)
+        self.assertNotIn('Earliest arrival before its destruction', report)
+
     def test_witnesses_sort_slowest_first_and_skip_malformed(self):
         self.records[1]['labels'] = labels(loot_visibility_attribution=summary.LOOT_V3, loot_visibility_witness=
             'CopperOre<area:rock4_copper_frac,d=1.2,net=1450,cre=18,cand=3/1,own=1;broken entry')

@@ -39,6 +39,9 @@ gives a few minutes per session. Starting the server earlier gives more.
    from a stamp at the head of the player loop).
 5. **Stop.** The frame a peer appears, the window ends; a call in progress is atomic and
    finishes. One log line per window: zones generated, time, attempts, candidates left.
+   Since 0.4.16, plain console lines (BepInEx `Message` level) mark the window for an operator
+   waiting to connect: `Idle pre-generation started: N zones…`, then `…finished: N zones in S s`
+   (or `nothing left to generate… Ready.`), or `…paused: a player is connecting`.
 
 ## Why the content is the same as vanilla's
 

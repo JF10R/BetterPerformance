@@ -1,5 +1,13 @@
 # Changelog
 
+### 0.4.16
+
+- Add opt-in deferral of the game's hourly unused-asset unload (`[Memory] DeferHourlyAssetUnloadEnabled`, `MaxDeferMinutes` 120). On 2026-09-23 the three loop gaps with no attributed method (306 ms server, 332 and 167 ms clients) were `Game.CollectResourcesCheckPeriodic`, scheduled every 3600 s, calling `Resources.UnloadUnusedAssets`. A client now leaves the unload to the native sleep, respawn and idle-pause checks; a dedicated server runs it once no peer is connected. Past the cap, vanilla runs it anyway. Gauges: `asset_unload_*`.
+- Idle pre-generation prints console lines an operator can wait for: started (zones queued), finished or nothing to do, paused by a connecting player.
+- Loot-visibility attribution v4. On the owner, t0 is now taken before the source's own drops exist: prefixes on `Destructible.Destroy`, `TreeBase.SpawnLog` and `MineRock.RPC_Hide`, since vanilla instantiates their drops before `ZNetScene.Destroy`. On a remote client, a drop ZDO that arrives up to 1 s before its source's removal can still match it (`loot_visibility_arrived_before_destroy`, `_lead_max`).
+  - Why: on 2026-09-23 every slow case (> 1 s) paired a destructible with the next one's drops. The owner reported impossible 1.0-4.4 s own-instantiate times while both send legs stayed ≤ 71 ms.
+  - Not a gameplay change.
+
 ### 0.4.15
 
 - Minimap and biome caches: the key no longer contains the plugin version or this plugin's own entry in the mod list. It fingerprints every Harmony patch attached to the cached methods instead (`IlFingerprint`, any owner, all four patch kinds). Before this, every release invalidated both caches, and a verified hit needs three loads under one key, so neither cache had served a hit in three sessions while still paying 0.6-0.8 s of store time per join. Label `*_cache_patch_fingerprint_fallback` shows when a patch could not be fingerprinted and the plugin version was used for it. A change inside a helper that a patch calls is not in the key.

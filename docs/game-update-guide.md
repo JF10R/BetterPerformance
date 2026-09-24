@@ -65,7 +65,7 @@ Then read the captures with `scripts/summarize_capture.py` and confirm: `probe_f
 | Attribution | `ZRoutedRpc.HandleRoutedRPC`, `RoutedRPCData` fields, `ZDO.Serialize` | `AttributionTelemetry.cs` |
 | Loading details | Which subpaths `AltBiomeWorldData.VerifyBiomeData` calls | `LoadingDetailsTelemetry.cs` |
 | Biome point cache | `AltBiomeWorldData.GenerateBiomePoints`, `Save`/`Load`, `m_world`; any `WorldGenerator` change re-keys the cache by design | `BiomePointCache.cs` |
-| Loot visibility | `MineRock5.RPC_SetAreaHealth`, the private `ZDOMan.CreateNewZDO(ZDOID, Vector3, int)` and its zero-hash arrival call site | `LootVisibilityTelemetry.cs` |
+| Loot visibility | `MineRock5.RPC_SetAreaHealth`, the private `ZDOMan.CreateNewZDO(ZDOID, Vector3, int)` and its zero-hash arrival call site; the drop-before-destroy order of `Destructible.Destroy`, `TreeBase.RPC_Damage` (`SpawnLog`) and `MineRock.RPC_Hit` (`RPC_Hide`) | `LootVisibilityTelemetry.cs` |
 
 A pinned raw-IL hash is the most update-fragile contract there is: the bytes include
 metadata tokens, which renumber whenever anything else in the assembly changes. Pin

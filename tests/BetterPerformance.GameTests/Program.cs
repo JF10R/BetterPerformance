@@ -303,6 +303,7 @@ Module("BiomeCache", () => BiomeCacheGameTests.Run(game, plugin));
 Module("Smelter", () => SmelterGameTests.Run(game, plugin));
 Module("Dungeon", () => DungeonGameTests.Run(game, plugin));
 Module("IdlePregeneration", () => IdlePregenerationGameTests.Run(game, plugin));
+Module("AssetUnload", () => AssetUnloadGameTests.Run(game, plugin));
 Module("MapPrecompression", () => MapPrecompressionGameTests.Run(game, plugin));
 if (contractFailures.Count > 0)
 {

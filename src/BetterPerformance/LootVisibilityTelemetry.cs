@@ -20,6 +20,8 @@ namespace BetterPerformance
     // ZNetView.Awake calls for local instantiation and network creation alike, so a drop
     // this process makes itself is observed too). Cross-process Stopwatch origins
     // are offset on this runtime, so no server clock enters any of these durations.
+    // On the owner, t0 is taken before the source's own drops are instantiated; on a
+    // remote client, an arrival up to 1 s before its source's removal can still match it.
     // Attribution is by position, time and drop table, never by identity: the game does
     // not link a destroyed hit area to the items it dropped.
     // Two legs run on the other processes: the owner's Instantiate to its first send to
@@ -28,6 +30,10 @@ namespace BetterPerformance
     {
         private const int DestructionCapacity = 32, ArrivalCapacity = 256, PrefabCapacity = 1024, FailureLimit = 8;
         private const int LegCapacity = 64, FreshLimit = 256, NameCapacity = 64, NameLength = 40;
+        // Look-back for a drop ZDO that arrives before its source's removal. 1 s (vs 250 ms)
+        // favours coverage; loot_visibility_arrived_before_destroy_lead_max shows what it needs.
+        private const int LookBackCapacity = 128, PreRecordedCapacity = 4;
+        private const double LookBackMs = 1000;
         // A drop settles after its spawn point: it falls and rolls before the owner's first send.
         private const double SettleMetres = 2, MinimumSpreadMetres = 4, MaxDropItems = 64;
         private const byte KindRock = 1, KindTree = 2, KindLog = 3, KindDestructible = 4, KindArea = 5, KindFracture = 6;
@@ -41,6 +47,11 @@ namespace BetterPerformance
         private static readonly Func<int, int, bool> SpawnCheck = CanSpawn;
         private static readonly List<FreshZdo> Fresh = new List<FreshZdo>(FreshLimit);
         private static readonly PeerSentSet SentSet = new PeerSentSet();
+        // Instance ids of objects whose owner t0 was taken before their drops; the
+        // ZNetScene.Destroy that follows in the same call must not record them again.
+        private static readonly int[] PreRecorded = new int[PreRecordedCapacity];
+        private static int preRecordedHead;
+        private static Func<MineRock, bool>? rockAllDestroyed;
         private static AccessTools.FieldRef<ZNetScene, Dictionary<ZDO, ZNetView>>? instances;
         private static AccessTools.FieldRef<List<ItemDrop>>? itemDrops;
         // MineRock5's private hit-area list and the area collider; read by reflection, only
@@ -104,10 +115,11 @@ namespace BetterPerformance
             try
             {
                 var (areaHealth, createZdo, addInstance, destroy, zdoDestroyed) = ValidateContracts();
+                var (breakDestructible, spawnLog, rockHide) = ValidateOwnerContracts();
                 installedRadius = Math.Max(2, Math.Min(32, radius.Value));
                 installedWindowMs = Math.Max(1, Math.Min(15, windowSeconds.Value)) * 1000.0;
                 tracker = new LootVisibilityTracker<ZDOID>(DestructionCapacity, ArrivalCapacity,
-                    installedRadius, installedWindowMs, SpawnCheck);
+                    installedRadius, installedWindowMs, SpawnCheck, LookBackCapacity, LookBackMs);
                 // A prefix: RPC_SetAreaHealth ends in UpdateMesh, which deactivates the destroyed
                 // area's collider, and an inactive collider reports empty bounds.
                 Patches.Patch(areaHealth, prefix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(BeforeSetAreaHealth)));
@@ -115,6 +127,9 @@ namespace BetterPerformance
                 Patches.Patch(addInstance, postfix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(AfterAddInstance)));
                 Patches.Patch(destroy, prefix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(BeforeDestroy)));
                 Patches.Patch(zdoDestroyed, prefix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(BeforeZdoDestroyed)));
+                Patches.Patch(breakDestructible, prefix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(BeforeDestructibleDestroy)));
+                Patches.Patch(spawnLog, prefix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(BeforeSpawnLog)));
+                Patches.Patch(rockHide, prefix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(BeforeRockHide)));
                 Installed = Enabled = true;
                 if (Status != "dedicated-server") Status = "installed";
             }
@@ -123,6 +138,7 @@ namespace BetterPerformance
                 Installed = Enabled = legsEnabled = false;
                 Status = LegsStatus = "unavailable";
                 tracker = null;
+                rockAllDestroyed = null;
                 try { Patches.UnpatchSelf(); } catch { failures++; }
                 logger.LogWarning("Loot visibility diagnostics unavailable; native behaviour retained: " +
                     exception.GetType().Name + ": " + exception.Message);
@@ -174,8 +190,9 @@ namespace BetterPerformance
         private static (MethodInfo AreaHealth, MethodInfo CreateZdo, MethodInfo AddInstance, MethodInfo Destroy, MethodInfo ZdoDestroyed) ValidateContracts()
         {
             // t0 for trees, logs, plain rocks and destructibles with a drop table: the owner
-            // destroys through ZNetScene.Destroy, every other client learns of it through
-            // OnZDODestroyed. MineRock5 areas keep their own hook since the object survives.
+            // destroys through ZNetScene.Destroy (earlier for sources that drop first, see
+            // ValidateOwnerContracts), every other client learns of it through OnZDODestroyed.
+            // MineRock5 areas keep their own hook since the object survives.
             var destroy = AccessTools.DeclaredMethod(typeof(ZNetScene), "Destroy", new[] { typeof(GameObject) })
                 ?? throw new InvalidOperationException("ZNetScene.Destroy(GameObject) is missing.");
             if (destroy.IsStatic || destroy.ReturnType != typeof(void))
@@ -233,6 +250,35 @@ namespace BetterPerformance
                 AccessTools.DeclaredField(typeof(DropTable), "m_drops")?.FieldType != typeof(List<DropTable.DropData>))
                 throw new InvalidOperationException("Unsupported drop-table contract.");
             return (areaHealth, createZdo, addInstance, destroy, zdoDestroyed);
+        }
+
+        // Owner t0 before the drops. Destructible.Destroy runs its fracture spawn and
+        // m_onDestroyed (DropOnDestroyed) before ZNetScene.Destroy; TreeBase.RPC_Damage calls
+        // SpawnLog, then instantiates its drops, then destroys; MineRock.RPC_Hit broadcasts
+        // Hide, which runs here at once, then drops, then destroys once every area is gone.
+        // TreeLog.Destroy destroys first and MineRock5 areas broadcast first: both unchanged.
+        private static (MethodInfo Destructible, MethodInfo SpawnLog, MethodInfo RockHide) ValidateOwnerContracts()
+        {
+            var destructible = AccessTools.DeclaredMethod(typeof(Destructible), "Destroy", new[] { typeof(HitData) })
+                ?? throw new InvalidOperationException("Destructible.Destroy(HitData) is missing.");
+            if (destructible.IsStatic || destructible.ReturnType != typeof(void))
+                throw new InvalidOperationException("Unsupported Destructible.Destroy signature.");
+            var spawnLog = AccessTools.DeclaredMethod(typeof(TreeBase), "SpawnLog", new[] { typeof(Vector3) })
+                ?? throw new InvalidOperationException("TreeBase.SpawnLog(Vector3) is missing.");
+            if (spawnLog.IsStatic || spawnLog.ReturnType != typeof(void))
+                throw new InvalidOperationException("Unsupported TreeBase.SpawnLog signature.");
+            var hide = AccessTools.DeclaredMethod(typeof(MineRock), "RPC_Hide", new[] { typeof(long), typeof(int) })
+                ?? throw new InvalidOperationException("MineRock.RPC_Hide(long, int) is missing.");
+            if (hide.IsStatic || hide.ReturnType != typeof(void))
+                throw new InvalidOperationException("Unsupported MineRock.RPC_Hide signature.");
+            // RPC_Hit saves the area's health before Hide, so AllDestroyed already answers
+            // whether this Hide precedes the rock's own destruction.
+            var allDestroyed = AccessTools.DeclaredMethod(typeof(MineRock), "AllDestroyed", Type.EmptyTypes);
+            if (allDestroyed == null || allDestroyed.IsStatic || allDestroyed.ReturnType != typeof(bool) ||
+                AccessTools.DeclaredField(typeof(MineRock), "m_removeWhenDestroyed")?.FieldType != typeof(bool))
+                throw new InvalidOperationException("Unsupported MineRock.AllDestroyed or m_removeWhenDestroyed contract.");
+            rockAllDestroyed = AccessTools.MethodDelegate<Func<MineRock, bool>>(allDestroyed);
+            return (destructible, spawnLog, hide);
         }
 
         private static void ResolveAreaGeometry()
@@ -363,8 +409,9 @@ namespace BetterPerformance
                 else freshSkipped++;
             }
             var current = Observing();
-            // No pending destruction means no work at all.
-            if (current == null || current.PendingDestructions == 0) return;
+            // Recorded even with no destruction pending: the source's removal can be
+            // observed after its drop's arrival (v4 look-back, a fixed ring, no allocation).
+            if (current == null) return;
             try
             {
                 if (!Bind(current)) return;
@@ -412,8 +459,10 @@ namespace BetterPerformance
             return (net.GetTime().Ticks - spawned) / (double)TimeSpan.TicksPerMillisecond;
         }
 
-        // Owner side: the object is destroyed locally and its drops are instantiated here.
-        // Only an owned ZDO is a destruction; a non-owner reaching Destroy is a zone unload.
+        // Owner side: the object is destroyed locally. Only an owned ZDO is a destruction; a
+        // non-owner reaching Destroy is a zone unload. t0 for TreeLog, whose drops follow this
+        // call, and for any source whose earlier hook did not run; the three that drop first
+        // were already recorded before their drops and are skipped here.
         private static void BeforeDestroy(GameObject __0)
         {
             var current = Observing();
@@ -424,9 +473,62 @@ namespace BetterPerformance
                 var zdo = view != null ? view.GetZDO() : null;
                 if (zdo == null || !zdo.IsOwner()) return;
                 if (!Bind(current)) return;
+                if (ConsumePreRecorded(__0.GetInstanceID())) return;
                 Record(current, zdo.GetPrefab(), __0, __0.transform.position, owned: true);
             }
             catch (Exception exception) { Fail(exception); }
+        }
+
+        // Before m_spawnWhenDestroyed and m_onDestroyed (DropOnDestroyed) spawn anything.
+        private static void BeforeDestructibleDestroy(Destructible __instance) => RecordOwnedEarly(__instance);
+
+        // RPC_Damage calls SpawnLog only for a felled tree, before the log and its drops.
+        private static void BeforeSpawnLog(TreeBase __instance) => RecordOwnedEarly(__instance);
+
+        // The owner's own Hide broadcast runs before the area's drops; only the one that
+        // leaves every area destroyed precedes the rock's ZNetScene.Destroy.
+        private static void BeforeRockHide(MineRock __instance, long __0)
+        {
+            var current = Observing();
+            if (current == null || __instance == null || rockAllDestroyed == null) return;
+            try
+            {
+                if (__0 != ZDOMan.GetSessionID() || !__instance.m_removeWhenDestroyed) return;
+                var view = __instance.GetComponent<ZNetView>();
+                var zdo = view != null ? view.GetZDO() : null;
+                if (zdo == null || !zdo.IsOwner() || !rockAllDestroyed(__instance)) return;
+                RecordOwnedEarly(__instance);
+            }
+            catch (Exception exception) { Fail(exception); }
+        }
+
+        private static void RecordOwnedEarly(Component source)
+        {
+            var current = Observing();
+            if (current == null || source == null) return;
+            try
+            {
+                var go = source.gameObject;
+                var view = go.GetComponent<ZNetView>();
+                var zdo = view != null ? view.GetZDO() : null;
+                if (zdo == null || !zdo.IsOwner()) return;
+                if (!Bind(current)) return;
+                Record(current, zdo.GetPrefab(), go, go.transform.position, owned: true);
+                PreRecorded[preRecordedHead] = go.GetInstanceID();
+                preRecordedHead = (preRecordedHead + 1) % PreRecorded.Length;
+            }
+            catch (Exception exception) { Fail(exception); }
+        }
+
+        private static bool ConsumePreRecorded(int id)
+        {
+            for (int i = 0; i < PreRecorded.Length; i++)
+            {
+                if (PreRecorded[i] != id) continue;
+                PreRecorded[i] = 0;
+                return true;
+            }
+            return false;
         }
 
         // Remote side: the owner's destruction arrives as a ZDO removal.
@@ -451,7 +553,12 @@ namespace BetterPerformance
                 source = Describe(go);
                 Sources.Add(hash, source);
             }
-            if (source == null) return;
+            // A MineRock5's areas are recorded by BeforeSetAreaHealth; its removal after the
+            // last one is the same destruction, not a second source at the rock root.
+            if (source == null || source.Kind == KindArea) return;
+            // On the owner a fracture's drops come from the spawned rock's areas, each
+            // recorded before its drops; a second owned source there would only compete.
+            if (owned && source.Kind == KindFracture) { destroyedFracture++; return; }
             switch (source.Kind)
             {
                 case KindRock: destroyedRock++; break;
@@ -689,8 +796,8 @@ namespace BetterPerformance
             labels.Add(new TextValue("loot_visibility_status", Status));
             labels.Add(new TextValue("loot_visibility_enabled", Enabled && Status == "installed" ? "true" : "false"));
             labels.Add(new TextValue("loot_visibility_scope",
-                "t2_is_ZNetScene.AddInstance; arrival_missing_is_unmeasured; area_t0_is_hit_area_centre; owned_sources_excluded"));
-            labels.Add(new TextValue("loot_visibility_attribution", "network_arrival_table_filtered_v3"));
+                "t2_is_ZNetScene.AddInstance; arrival_missing_is_unmeasured; area_t0_is_hit_area_centre; owned_sources_excluded; owner_t0_before_drops; arrival_look_back_1s"));
+            labels.Add(new TextValue("loot_visibility_attribution", "network_arrival_look_back_v4"));
             labels.Add(new TextValue("loot_visibility_legs_status", LegsStatus));
             gauges.Add(new NumberValue("loot_visibility_probe_failures", intervalFailures, "calls"));
             gauges.Add(new NumberValue("loot_visibility_unknown_prefabs", unknownPrefabs, "observations"));
@@ -745,6 +852,9 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("loot_visibility_owner_instantiate_max", summary.OwnerInstantiateMaxMs, "ms"));
             gauges.Add(new NumberValue("loot_visibility_owner_unmatched", summary.OwnerUnmatched, "observations"));
             gauges.Add(new NumberValue("loot_visibility_owner_ambiguous", summary.OwnerAmbiguous, "observations"));
+            gauges.Add(new NumberValue("loot_visibility_arrived_before_destroy", summary.ArrivedBeforeDestroy, "observations"));
+            gauges.Add(new NumberValue("loot_visibility_arrived_before_destroy_lead_max", summary.ArrivedBeforeDestroyLeadMaxMs, "ms"));
+            gauges.Add(new NumberValue("loot_visibility_look_back_overwritten", summary.LookBackOverwritten, "arrivals"));
             gauges.Add(new NumberValue("loot_visibility_censored", summary.Censored, "entries"));
             gauges.Add(new NumberValue("loot_visibility_destruction_overflow", summary.Overflowed, "destructions"));
             gauges.Add(new NumberValue("loot_visibility_arrival_capacity_skips", summary.ArrivalCapacitySkipped, "observations"));
@@ -843,6 +953,8 @@ namespace BetterPerformance
             Sources.Clear();
             PrefabNames.Clear();
             Fresh.Clear();
+            Array.Clear(PreRecorded, 0, PreRecorded.Length);
+            preRecordedHead = 0;
             collecting = false;
             destroyedRock = destroyedTree = destroyedLog = destroyedDestructible = destroyedFracture = 0;
             areaCentreFallbacks = emptyTables = freshSkipped = 0;
@@ -861,6 +973,7 @@ namespace BetterPerformance
             ownerLeg = serverLeg = null;
             hitAreasField = areaColliderField = null;
             colliderBounds = colliderEnabled = null;
+            rockAllDestroyed = null;
             Installed = Enabled = legsEnabled = false;
             Status = LegsStatus = "disabled";
             enabled = null;

@@ -22,7 +22,129 @@ internal static class LootVisibilityTests
         WitnessesKeepTheSlowestWithinBounds();
         OwnerLegMatchesOnlyItsOwnSingleSource();
         OldDropReenteringViewIsStale();
+        LookBackRejectsUnusableBounds();
+        ArrivalBeforeItsDestructionIsMatched();
+        NextSourcesDropsAreNoLongerStolen();
+        LookBackIsBoundedByAgeAndCapacity();
+        LookBackSkipsOwnedAndClassifiedEntries();
+        OwnerSourceRecordedBeforeItsDropsIsMatched();
         LootSendLegTests.Run();
+    }
+
+    private static LootVisibilityTracker<int> LookBack(int capacity = 128, double lookBack = 1000)
+        => new LootVisibilityTracker<int>(32, 256, 12, 5000, Table, capacity, lookBack);
+
+    private static void LookBackRejectsUnusableBounds()
+    {
+        Rejects(() => new LootVisibilityTracker<int>(32, 256, 12, 5000, Table, -1, 1000), "A negative look-back capacity is invalid.");
+        Rejects(() => new LootVisibilityTracker<int>(32, 256, 12, 5000, Table, 8, 0), "An enabled look-back needs a positive duration.");
+        Rejects(() => new LootVisibilityTracker<int>(32, 256, 12, 5000, Table, 8, 6000), "The look-back cannot exceed the window.");
+        Rejects(() => new LootVisibilityTracker<int>(32, 256, 12, 5000, Table, 8, double.NaN), "An invalid look-back must not be stored.");
+    }
+
+    // A remote drop's ZDO can arrive before its source's removal notice.
+    private static void ArrivalBeforeItsDestructionIsMatched()
+    {
+        var tracker = LookBack();
+        Check(!tracker.Arrived(1, 0.5, 0, 0, 990), "With nothing pending the arrival is only remembered.");
+        tracker.Destroyed(0, 0, 0, 1000, 100, 4, false, 4);
+        Check(tracker.PendingArrivals == 1, "The destruction stores the arrival that preceded it.");
+        Check(tracker.Created(1, 0.5, 0, 0, 1030, false, 1, double.NaN, out _), "The drop is timed against its own source.");
+        var summary = tracker.Drain(1100);
+        Check(summary.ArrivedBeforeDestroy == 1 && summary.ArrivedBeforeDestroyLeadMaxMs == 10,
+            "An arrival before its destruction is counted, with how early it came.");
+        Check(summary.PerceivedCount == 1 && summary.PerceivedSumMs == 30 && summary.PerceivedBuckets[1] == 1,
+            "Perceived is t2 - t0, never negative.");
+        Check(summary.NetworkCount == 0 && summary.CreationCount == 0 && summary.NetworkSumMs == 0,
+            "A negative network leg never enters the leg sums.");
+        Check(summary.Witnesses.Length == 1 && summary.Witnesses[0].NetworkMs == -10 && summary.Witnesses[0].CreationMs == 40,
+            "The witness shows the arrival's lead as a negative network leg.");
+
+        var v3 = Tables();
+        v3.Arrived(1, 0.5, 0, 0, 990);
+        v3.Destroyed(0, 0, 0, 1000, 100, 4, false, 4);
+        v3.Created(1, 0.5, 0, 0, 1030, false, 1, double.NaN, out _);
+        Check(v3.Drain(1100).ArrivalMissing == 1, "Without the look-back the same drop was reported as a missing arrival.");
+    }
+
+    // A destroyed at t=100, B beside it at t=2000; B's drop arrives 10 ms before B's notice.
+    private static void NextSourcesDropsAreNoLongerStolen()
+    {
+        var v3 = Tables();
+        v3.Destroyed(0, 0, 0, 100, 100, 4, false, 4);
+        v3.Arrived(1, 3.5, 0, 0, 1990);
+        v3.Destroyed(3, 0, 0, 2000, 100, 4, false, 4);
+        Check(v3.Created(1, 3.5, 0, 0, 2030, false, 1, double.NaN, out _), "v3 times B's drop against A: the defect.");
+        Check(v3.Drain(2100).PerceivedMaxMs == 1930, "The stolen pairing reads as a 1.9 s delay.");
+
+        var tracker = LookBack();
+        tracker.Destroyed(0, 0, 0, 100, 100, 4, false, 4);
+        tracker.Arrived(1, 3.5, 0, 0, 1990);
+        tracker.Destroyed(3, 0, 0, 2000, 100, 4, false, 4);
+        Check(!tracker.Created(1, 3.5, 0, 0, 2030, false, 1, double.NaN, out _), "Both sources cover the drop, so it is ambiguous.");
+        tracker.Destroyed(50, 0, 0, 3000, 100, 4, false, 4);
+        tracker.Arrived(2, 57.5, 0, 0, 4990);
+        tracker.Destroyed(57, 0, 0, 5000, 100, 4, false, 4);
+        Check(tracker.Created(2, 57.5, 0, 0, 5020, false, 1, double.NaN, out _), "A source 7 m away is out of its own radius; the late one is timed.");
+        var summary = tracker.Drain(5100);
+        Check(summary.Ambiguous == 1 && summary.PerceivedCount == 1 && summary.PerceivedMaxMs == 20 && summary.ArrivedBeforeDestroy == 1,
+            "No drop is timed against the earlier source any more.");
+    }
+
+    private static void LookBackIsBoundedByAgeAndCapacity()
+    {
+        var tracker = LookBack(capacity: 4, lookBack: 1000);
+        tracker.Arrived(1, 0, 0, 0, 1000);
+        tracker.Destroyed(0, 0, 0, 2001, 100, 4, false, 4);
+        Check(tracker.PendingArrivals == 0, "An arrival older than the look-back is not joined.");
+        Check(!tracker.Created(1, 0, 0, 0, 2010, false, 1, double.NaN, out _), "It stays a missing arrival.");
+        for (int key = 10; key < 15; key++) tracker.Arrived(key, 100, 0, 0, 3000 + key);
+        tracker.Destroyed(100, 0, 0, 3100, 100, 4, false, 4);
+        Check(tracker.PendingArrivals == 4, "The ring holds four; the oldest was replaced.");
+        Check(!tracker.Created(10, 100, 0, 0, 3110, false, 1, double.NaN, out _), "The replaced arrival cannot match.");
+        var summary = tracker.Drain(3200);
+        Check(summary.LookBackOverwritten == 1 && summary.ArrivalMissing == 2 && summary.PerceivedCount == 0,
+            "A replacement inside the look-back is counted, never timed.");
+
+        var full = new LootVisibilityTracker<int>(32, 2, 12, 5000, Table, 8, 1000);
+        for (int key = 0; key < 3; key++) full.Arrived(key, 0, 0, 0, 100);
+        full.Destroyed(0, 0, 0, 200, 100, 4, false, 4);
+        Check(full.PendingArrivals == 2 && full.Drain(300).ArrivalCapacitySkipped == 1,
+            "Joining arrivals respects the arrival capacity.");
+    }
+
+    private static void LookBackSkipsOwnedAndClassifiedEntries()
+    {
+        var tracker = LookBack();
+        tracker.Arrived(1, 0, 0, 0, 100);
+        tracker.Destroyed(0, 0, 0, 110, 100, 4, owned: true, 4);
+        Check(tracker.PendingArrivals == 0, "An owned source's drops are local, so it never looks back.");
+        tracker.Arrived(2, 20, 0, 0, 200);
+        Check(!tracker.Created(2, 20, 0, 0, 210, false, 1, double.NaN, out _), "Classified with nothing pending.");
+        tracker.Destroyed(20, 0, 0, 220, 100, 4, false, 4);
+        Check(tracker.PendingArrivals == 0, "A drop already classified is not stored again.");
+        var summary = tracker.Drain(300);
+        Check(summary.Unattributed == 1 && summary.PerceivedCount == 0 && summary.ArrivedBeforeDestroy == 0,
+            "Its first classification stands.");
+    }
+
+    // The owner's drops come in the same call as their destruction; the order of the two
+    // records decides the pairing. v4 records tree, destructible and plain rock first.
+    private static void OwnerSourceRecordedBeforeItsDropsIsMatched()
+    {
+        var late = Tables();
+        late.Destroyed(8, 0, 0, 100, 100, 4, owned: true, 4);
+        late.Created(1, 10.2, 0, 0, 2000, true, 1, double.NaN, out bool stolen);
+        late.Destroyed(10, 0, 0, 2000, 100, 4, owned: true, 4);
+        Check(stolen && late.Drain(2100).OwnerInstantiateMaxMs == 1900, "Recorded after its drops, B's drop is timed against A.");
+
+        var early = Tables();
+        early.Destroyed(0, 0, 0, 100, 100, 4, owned: true, 4);
+        early.Destroyed(10, 0, 0, 2000, 100, 4, owned: true, 4);
+        early.Created(1, 10.2, 0, 0, 2000.5, true, 1, double.NaN, out bool matched);
+        var summary = early.Drain(2100);
+        Check(matched && summary.OwnerInstantiateCount == 1 && summary.OwnerInstantiateMaxMs == 0.5,
+            "Recorded before its drops, B times its own drop in the same frame.");
     }
 
     private static void OldDropReenteringViewIsStale()

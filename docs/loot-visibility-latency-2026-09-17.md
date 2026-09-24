@@ -120,8 +120,31 @@ first receipt → first send to each other peer (`loot_visibility_server_send_*`
 peer's sent map after `ZDOMan.SendZDOs`. Both are bounded to 64 drops. If both stay near the
 50 ms tick while the observer still reports >1 s, the tail is attribution.
 
-Not covered: owner-side sources that destroy after dropping (tree, destructible) never match the
+Not covered in v3: owner-side sources that destroy after dropping (tree, destructible) never match the
 owner leg; a player's own inventory drop near a rock with the same item remains mis-timeable.
+
+### Attribution v4: t0 before the drops, and a look-back
+
+`loot_visibility_attribution=network_arrival_look_back_v4`. The 0.4.15 captures of 2026-09-23 showed
+`owner_instantiate_max` of 1-4 s on the owner, which cannot happen (vanilla instantiates in the same
+call), matching the remote client's `network_max`: each destructible was paired with the next one's
+drops. Two causes, two fixes:
+
+- Owner: `Destructible.Destroy` runs `m_onDestroyed` (`DropOnDestroyed`), `TreeBase.RPC_Damage` its
+  drops and `MineRock.RPC_Hit` its last area's drops before `ZNetScene.Destroy`. t0 is now taken in a
+  prefix of `Destructible.Destroy`, `TreeBase.SpawnLog` and the owner's own `MineRock.RPC_Hide` when it
+  leaves every area destroyed; the `ZNetScene.Destroy` that follows is not recorded again. `TreeLog`
+  destroys before dropping and `MineRock5` areas broadcast first: unchanged. A `MineRock5`'s removal
+  after its last area and, on the owner, a fractured deposit are no longer second sources.
+- Remote: a drop's ZDO can arrive before its source's removal. Every arrival is remembered for 1 s in
+  a 128-entry ring; a remote destruction becomes a late candidate of each one in radius. A match on a
+  late candidate counts in `loot_visibility_arrived_before_destroy`, enters the perceived timings as
+  t2 - t0 (never negative) and stays out of the network and creation legs; its witness shows the
+  negative network leg. `..._arrived_before_destroy_lead_max` is the longest lead seen,
+  `loot_visibility_look_back_overwritten` counts ring entries lost while still eligible.
+
+Not covered: a drop whose object is created (t2) before its source's removal is classified then, and
+can still be paired with an earlier source.
 
 ## Candidate, only after the split is measured
 

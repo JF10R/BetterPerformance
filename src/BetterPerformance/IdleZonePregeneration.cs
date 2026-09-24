@@ -368,7 +368,11 @@ namespace BetterPerformance
             windowStarted = Stopwatch.GetTimestamp();
             windowZones = windowAttempts = windowNotReady = windowAbandoned = 0;
             windowSpawnMs = 0;
-            if (queue.Count > 0) return true;
+            if (queue.Count > 0)
+            {
+                log?.LogMessage("Idle pre-generation started: " + queue.Count + " zones to generate around recent play. It pauses whenever a player connects.");
+                return true;
+            }
             EndWindow("nothing_to_do");
             Status = "exhausted";
             return false;
@@ -386,6 +390,14 @@ namespace BetterPerformance
                 + " s (" + windowSpawnMs.ToString("0", CultureInfo.InvariantCulture) + " ms generating; attempts " + windowAttempts
                 + ", not ready " + windowNotReady + ", abandoned " + windowAbandoned + "); " + Remaining() + " candidates left; run total "
                 + runGenerated + "; ended: " + reason + ".");
+            // One plain console line an operator can wait for before connecting.
+            string rounded = seconds.ToString("0", CultureInfo.InvariantCulture);
+            if (reason == "exhausted" || reason == "run_cap")
+                log?.LogMessage("Idle pre-generation finished: " + windowZones + " zones in " + rounded + " s. The area around recent play is ready.");
+            else if (reason == "nothing_to_do")
+                log?.LogMessage("Idle pre-generation: nothing left to generate around recent play. Ready.");
+            else if (reason == "peer_connected")
+                log?.LogMessage("Idle pre-generation paused: a player is connecting (" + windowZones + " zones done, " + Remaining() + " left).");
         }
 
         private static int Remaining() => Math.Max(0, queue.Count - queueIndex) + (current != null ? 1 : 0);

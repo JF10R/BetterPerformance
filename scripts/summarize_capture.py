@@ -114,7 +114,17 @@ def loot_visibility_report(records):
               'the first timestamp is when the destruction was observed locally, not when the server applied it. '
               'An absent arrival does not prove local creation: network observations can also be skipped or expire.', '']
     policies = {labels.get('loot_visibility_attribution') for _, labels in loot_windows}
-    if loot_windows and policies == {LOOT_V3}:
+    if loot_windows and policies == {LOOT_V4}:
+        output += ['Attribution v4: the v3 filters, plus an owner t0 taken before the source\'s own drops (tree, '
+                   'destructible, plain rock) and a 1 s look-back for a drop that arrives before its source\'s '
+                   'removal. Such a drop is timed as perceived only (t2 - t0, never negative) and counted as arrived '
+                   'before destroy; its negative network leg stays out of the leg totals, so the legs no longer sum '
+                   'to the perceived total.', '']
+    elif loot_windows and LOOT_V4 in policies and policies <= {LOOT_V3, LOOT_V4}:
+        output += ['Mixed v3/v4 attribution: the totals below combine both. v3 windows can pair a drop that arrived '
+                   'before its source\'s removal, or an owner\'s drop instantiated before its t0, with the previous '
+                   'destruction, so read the tail from v4 windows and their witnesses only.', '']
+    elif loot_windows and policies == {LOOT_V3}:
         output += ['Attribution v3: a network arrival keeps up to four nearby destructions, never one this process '
                    'owned (its drops are created locally). At creation only sources whose drop table holds the item '
                    'and whose own spawn radius covers the arrival remain; exactly one is timed. A single survivor still '
@@ -171,6 +181,8 @@ def loot_visibility_report(records):
                   ('loot_visibility_owned_source_excluded', 'network drops that had an own destruction removed as candidate (v3)'),
                   ('loot_visibility_candidates_truncated', 'drops with more than four candidates (v3, excluded as ambiguous)'),
                   ('loot_visibility_stale', 'old drops re-entering view, by spawn stamp (v3, excluded)'),
+                  ('loot_visibility_arrived_before_destroy', 'timed drops that arrived before their destruction (v4, perceived only)'),
+                  ('loot_visibility_look_back_overwritten', 'arrivals replaced in the look-back ring while still eligible (v4)'),
                   ('loot_visibility_perceived_over_1s', 'timed drops over one second'),
                   ('loot_visibility_witness_overflow', 'drops over one second beyond the witness bound'),
                   ('loot_visibility_area_centre_fallbacks', 'area destructions timed from the rock root (no area bounds)'),
@@ -182,6 +194,9 @@ def loot_visibility_report(records):
         output += ['| Accounting | Observed total |', '| --- | ---: |']
         output += [f'| {cell(label)} | {exact(value)} |' for label, value in rows]
         output += ['', 'A skipped or overwritten entry is an unmeasured observation, not a fast one.', '']
+    lead = extent(windows, 'loot_visibility_arrived_before_destroy_lead_max')
+    if lead and lead[1] > 0:
+        output += [f'Earliest arrival before its destruction: {lead[1]:.3f} ms (the look-back is 1000 ms).', '']
     output += loot_send_legs(windows)
     output += loot_witnesses(windows)
     population = extent(windows, 'item_drop_instances')
@@ -193,6 +208,7 @@ def loot_visibility_report(records):
 
 LOOT_V2 = 'network_arrival_single_candidate_v2'
 LOOT_V3 = 'network_arrival_table_filtered_v3'
+LOOT_V4 = 'network_arrival_look_back_v4'
 LOOT_LEGS = (('owner_instantiate', 'owner: own destruction → own Instantiate of its drop'),
              ('owner_send', 'owner: Instantiate → first ZDOData send to the server'),
              ('server_send', 'server: first receipt → first send to each other peer'))

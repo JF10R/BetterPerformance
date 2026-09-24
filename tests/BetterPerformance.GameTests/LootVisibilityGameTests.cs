@@ -156,6 +156,61 @@ internal static class LootVisibilityGameTests
         Check(dropInstances == null || (dropInstances.IsStatic && dropInstances.FieldType.FullName.StartsWith("System.Collections.Generic.List`1<ItemDrop>")),
             "ItemDrop.s_instances, when present, is the static list the population gauge reads");
 
+        // 3b'. v4 owner t0 before the drops. Each source's own order is contract: the hook is
+        //      placed before the first drop, and the ZNetScene.Destroy that follows is skipped.
+        int Position(MethodDefinition method, Func<Cil.Instruction, bool> match, string what)
+        {
+            int index = method.Body.Instructions.ToList().FindIndex(i => match(i));
+            Check(index >= 0, method.DeclaringType.Name + "." + method.Name + " still " + what);
+            return index;
+        }
+        bool Calls(Cil.Instruction i, string type, string name) =>
+            i.Operand is MethodReference called && called.Name == name && called.DeclaringType.FullName == type;
+        bool Reads(Cil.Instruction i, string name) => (i.Operand as FieldReference)?.Name == name;
+        Check(!breakRock.IsStatic && breakRock.ReturnType.FullName == "System.Void" && breakRock.Parameters[0].ParameterType.FullName == "HitData",
+            "Destructible.Destroy(HitData) is an instance void method");
+        int netDestroy = Position(breakRock, i => Calls(i, "ZNetScene", "Destroy"), "ends in ZNetScene.Destroy");
+        Check(Position(breakRock, i => Reads(i, "m_spawnWhenDestroyed"), "spawns m_spawnWhenDestroyed") < netDestroy &&
+              Position(breakRock, i => Reads(i, "m_onDestroyed"), "invokes m_onDestroyed") < netDestroy,
+            "Destructible.Destroy spawns its fracture and runs m_onDestroyed (DropOnDestroyed) before ZNetScene.Destroy");
+        Check(gameModule.GetType("DropOnDestroyed")!.Methods.Any(m => m.Name == "Awake" && m.HasBody &&
+                m.Body.Instructions.Any(i => Reads(i, "m_onDestroyed") && (i.Operand as FieldReference)?.DeclaringType.FullName == "Destructible")),
+            "DropOnDestroyed still drops through Destructible.m_onDestroyed");
+        TypeDefinition tree = gameModule.GetType("TreeBase")!;
+        MethodDefinition spawnLog = tree.Methods.SingleOrDefault(m => m.Name == "SpawnLog" &&
+            m.Parameters.Select(p => p.ParameterType.FullName).SequenceEqual(new[] { "UnityEngine.Vector3" }))
+            ?? throw new InvalidOperationException("Loot visibility: TreeBase.SpawnLog(Vector3) is missing.");
+        Check(!spawnLog.IsStatic && spawnLog.ReturnType.FullName == "System.Void", "TreeBase.SpawnLog(Vector3) is an instance void method");
+        MethodDefinition treeDamage = tree.Methods.Single(m => m.Name == "RPC_Damage");
+        Check(tree.Methods.Count(m => m.HasBody && m.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Resolve() == spawnLog)) == 1,
+            "TreeBase.SpawnLog has a single caller, RPC_Damage");
+        int treeLog = Position(treeDamage, i => (i.Operand as MethodReference)?.Resolve() == spawnLog, "calls SpawnLog");
+        int treeDrops = Position(treeDamage, i => Calls(i, "DropTable", "GetDropList"), "reads its drop list");
+        int treeDestroy = treeDamage.Body.Instructions.ToList().FindLastIndex(i => Calls(i, "ZNetView", "Destroy"));
+        Check(treeLog < treeDrops && treeDrops < treeDestroy, "TreeBase.RPC_Damage calls SpawnLog, then drops, then destroys");
+        TypeDefinition plainRock = gameModule.GetType("MineRock")!;
+        MethodDefinition hide = plainRock.Methods.SingleOrDefault(m => m.Name == "RPC_Hide" &&
+            m.Parameters.Select(p => p.ParameterType.FullName).SequenceEqual(new[] { "System.Int64", "System.Int32" }))
+            ?? throw new InvalidOperationException("Loot visibility: MineRock.RPC_Hide(long, int) is missing.");
+        Check(!hide.IsStatic && hide.ReturnType.FullName == "System.Void", "MineRock.RPC_Hide(long, int) is an instance void handler");
+        Check(plainRock.Methods.Any(m => m.HasBody && m.Body.Instructions.Any(i => i.OpCode == Cil.OpCodes.Ldstr && (string)i.Operand == "Hide") &&
+                m.Body.Instructions.Any(i => i.OpCode == Cil.OpCodes.Ldftn && (i.Operand as MethodReference)?.Resolve() == hide)),
+            "MineRock still registers RPC_Hide as Hide, so the owner's own broadcast runs it at once");
+        Check(plainRock.Methods.Any(m => m.Name == "AllDestroyed" && !m.IsStatic && m.Parameters.Count == 0 && m.ReturnType.FullName == "System.Boolean") &&
+              plainRock.Fields.Any(f => f.Name == "m_removeWhenDestroyed" && f.IsPublic && f.FieldType.FullName == "System.Boolean"),
+            "MineRock.AllDestroyed() and m_removeWhenDestroyed still decide the rock's removal");
+        MethodDefinition rockHit = plainRock.Methods.Single(m => m.Name == "RPC_Hit");
+        int healthSaved = Position(rockHit, i => Calls(i, "ZDO", "Set"), "saves the area's health");
+        int hideSent = Position(rockHit, i => i.OpCode == Cil.OpCodes.Ldstr && (string)i.Operand == "Hide", "broadcasts Hide");
+        int rockDrops = Position(rockHit, i => Calls(i, "DropTable", "GetDropList"), "reads its drop list");
+        int rockDestroy = Position(rockHit, i => Calls(i, "ZNetView", "Destroy"), "destroys the rock");
+        Check(healthSaved < hideSent && hideSent < rockDrops && rockDrops < rockDestroy,
+            "MineRock.RPC_Hit saves health, broadcasts Hide, drops, then destroys");
+        MethodDefinition logBreak = gameModule.GetType("TreeLog")!.Methods.Single(m => m.Name == "Destroy" && m.Parameters.Count == 2);
+        Check(Position(logBreak, i => Calls(i, "ZNetScene", "Destroy"), "calls ZNetScene.Destroy") <
+              Position(logBreak, i => Calls(i, "DropTable", "GetDropList"), "reads its drop list"),
+            "TreeLog.Destroy destroys before dropping, so ZNetScene.Destroy stays its t0");
+
         // 3c. Send legs: SendZDOs records every ZDO it wrote in the peer's sent map, and
         //     RPC_ZDOData deserializes (so knows the prefab) only after creating the ZDO.
         MethodDefinition sendZdos = zdoMan.Methods.SingleOrDefault(m => m.Name == "SendZDOs" &&
@@ -183,6 +238,9 @@ internal static class LootVisibilityGameTests
             ("AfterAddInstance", new[] { "ZDO", "ZNetView" }),
             ("BeforeDestroy", new[] { "UnityEngine.GameObject" }),
             ("BeforeZdoDestroyed", new[] { "ZNetScene", "ZDO" }),
+            ("BeforeDestructibleDestroy", new[] { "Destructible" }),
+            ("BeforeSpawnLog", new[] { "TreeBase" }),
+            ("BeforeRockHide", new[] { "MineRock", "System.Int64" }),
             ("AfterSendZdos", new[] { "System.Object", "System.Boolean" }),
             ("BeforeZdoData", new string[0]),
             ("AfterZdoData", new string[0]),
