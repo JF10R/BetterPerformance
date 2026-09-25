@@ -36,7 +36,10 @@ gives a few minutes per session. Starting the server earlier gives more.
    location prefab still loading, which the call itself queued) is retried on later frames,
    abandoned after 300 attempts. Nothing runs on a frame where another zone was generated,
    a save is in progress, or more than `MaxMillisecondsPerFrame` had already passed (measured
-   from a stamp at the head of the player loop).
+   from a stamp placed right after `TimeUpdate.WaitForLastPresentationAndUpdateTime`, where
+   Unity sleeps to the target frame rate; label `idle_pregen_frame_stamp`). Before 0.4.17 the
+   stamp preceded that sleep, so an idle 30 Hz server counted ~30 ms against the budget and
+   refused nearly every frame: 1 zone in 83 idle minutes on 2026-09-24.
 5. **Stop.** The frame a peer appears, the window ends; a call in progress is atomic and
    finishes. One log line per window: zones generated, time, attempts, candidates left.
    Since 0.4.16, plain console lines (BepInEx `Message` level) mark the window for an operator

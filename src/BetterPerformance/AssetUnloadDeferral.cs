@@ -22,6 +22,8 @@ namespace BetterPerformance
         private static ManualLogSource? log;
         private static bool pending;
         private static float nextPump;
+        // Server: when peers last went from none to some; the deferral cap counts from here.
+        private static DateTime? playStarted;
         private static long deferred, capped, idleRuns, nativeRuns;
 
         internal static bool Installed { get; private set; }
@@ -33,7 +35,7 @@ namespace BetterPerformance
                 "Move the game's hourly unused-asset unload (a 150-350 ms freeze) out of play: a client leaves it to its native sleep, " +
                 "respawn and idle-pause checks, a dedicated server runs it once no player is connected. Requires restart.");
             maxDeferMinutes = config.Bind("Memory", "MaxDeferMinutes", 120, new ConfigDescription(
-                "Longest time since the last unload before the hourly check runs it anyway.",
+                "Longest deferral before the hourly check runs the unload anyway, counted from the last unload or, on a server, from when players arrived if later.",
                 new AcceptableValueRange<int>(60, 720)));
             log = logger;
             if (!option.Value) { Status = "disabled"; return; }
@@ -70,6 +72,9 @@ namespace BetterPerformance
 
         private static bool Dedicated(ZNet net) => !ReferenceEquals(net, null) && net.IsDedicated();
 
+        private static double SincePlayStarted(bool dedicated) =>
+            dedicated && playStarted is DateTime started ? (DateTime.Now - started).TotalSeconds : double.PositiveInfinity;
+
         // Any failure returns true: the native check then runs exactly as vanilla.
         private static bool BeforePeriodic(Game __instance)
         {
@@ -79,7 +84,7 @@ namespace BetterPerformance
                 ZNet net = ZNet.instance;
                 bool dedicated = Dedicated(net);
                 int peers = ReferenceEquals(net, null) ? 0 : net.GetPeers().Count;
-                switch (AssetUnloadPolicy.Periodic(SinceLastUnload(__instance), maxDeferMinutes!.Value * 60.0, dedicated, peers))
+                switch (AssetUnloadPolicy.Periodic(SinceLastUnload(__instance), SincePlayStarted(dedicated), maxDeferMinutes!.Value * 60.0, dedicated, peers))
                 {
                     case AssetUnloadDecision.Defer:
                         deferred++;
@@ -103,7 +108,7 @@ namespace BetterPerformance
         // Main thread, from Plugin.Update: a deferred server unload runs once nobody is connected.
         internal static void Pump()
         {
-            if (!pending) return;
+            if (!Installed) return;
             float now = UnityEngine.Time.realtimeSinceStartup;
             if (now < nextPump) return;
             nextPump = now + PumpSeconds;
@@ -111,8 +116,12 @@ namespace BetterPerformance
             {
                 Game game = Game.instance;
                 ZNet net = ZNet.instance;
-                if (game == null || !Dedicated(net)) { pending = false; return; }
-                if (!AssetUnloadPolicy.RunDeferredOnServer(pending, SinceLastUnload(game), net.GetPeers().Count))
+                if (game == null || !Dedicated(net)) { pending = false; playStarted = null; return; }
+                int peers = net.GetPeers().Count;
+                if (peers == 0) playStarted = null;
+                else if (playStarted == null) playStarted = DateTime.Now;
+                if (!pending) return;
+                if (!AssetUnloadPolicy.RunDeferredOnServer(pending, SinceLastUnload(game), peers))
                 {
                     if (SinceLastUnload(game) <= AssetUnloadPolicy.NativePeriodSeconds) pending = false;
                     return;
@@ -141,6 +150,8 @@ namespace BetterPerformance
             Game game = Game.instance;
             if (game != null && lastUnload != null)
                 gauges.Add(new NumberValue("asset_unload_since_last_s", Math.Round(SinceLastUnload(game), 1), "s"));
+            if (playStarted is DateTime started)
+                gauges.Add(new NumberValue("asset_unload_since_play_s", Math.Round((DateTime.Now - started).TotalSeconds, 1), "s"));
         }
 
         private static long Take(ref long counter)
@@ -158,6 +169,7 @@ namespace BetterPerformance
             Installed = false;
             Status = "disabled";
             pending = false;
+            playStarted = null;
             lastUnload = null;
             option = null;
             maxDeferMinutes = null;

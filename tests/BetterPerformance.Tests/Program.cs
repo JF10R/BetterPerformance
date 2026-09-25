@@ -105,12 +105,31 @@ internal static class Program
             Check(!CaptureStorage.HasCapacity(directory, 8193, 8192), "Oversized file allowance must be rejected.");
             Check(new FileInfo(capture).Length == 4096 && new FileInfo(unrelated).Length == 16384,
                 "Storage checks must not alter or delete existing files.");
+
+            // Purge: only this plugin's names, oldest stamp first, and only as much as needed.
+            string Named(string stamp, string ext) => Path.Combine(directory, stamp + "Z-client-" + new string('a', 32) + "." + ext);
+            string oldest = Named("20260901T000000000", "jsonl"), middle = Named("20260902T000000000", "jsonl");
+            string newest = Named("20260903T000000000", "jsonl"), relayedLog = Named("20260901T000000001", "log");
+            File.WriteAllBytes(newest, new byte[2048]);
+            File.WriteAllBytes(oldest, new byte[2048]);
+            File.WriteAllBytes(middle, new byte[2048]);
+            Check(!CaptureStorage.HasCapacity(directory, 4096, 12288), "10 KB of captures leave no room for 4 KB under 12 KB.");
+            Check(CaptureStorage.MakeRoom(directory, 4096, 12288, out int deleted, out long freed) && deleted == 1 && freed == 2048,
+                "MakeRoom deletes just enough.");
+            Check(!File.Exists(oldest) && File.Exists(middle) && File.Exists(newest), "The oldest capture goes first.");
+            Check(!CaptureStorage.MakeRoom(directory, 8192, 8192, out deleted, out _) && deleted == 2,
+                "When purging cannot make room it says so after deleting its own files.");
+            Check(File.Exists(capture) && File.Exists(unrelated), "Files the plugin did not name are never deleted.");
+
+            File.WriteAllBytes(oldest, new byte[1024]);
+            File.WriteAllBytes(relayedLog, new byte[1024]);
+            long left = CaptureStorage.TrimTo(directory, 16384 + 4096 + 1024, out deleted, out _);
+            Check(left == 16384 + 4096 + 1024 && deleted == 1 && !File.Exists(oldest) && File.Exists(relayedLog),
+                "TrimTo removes the oldest named files, logs included, down to the target.");
         }
         finally
         {
-            if (File.Exists(capture)) File.Delete(capture);
-            if (File.Exists(unrelated)) File.Delete(unrelated);
-            if (Directory.Exists(directory)) Directory.Delete(directory);
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
     }
 

@@ -1,5 +1,16 @@
 # Changelog
 
+### 0.4.17
+
+- Idle pre-generation: fix its frame budget. On 2026-09-24 it generated 1 zone in 83 idle minutes.
+  - Cause: the frame-start stamp sat before `TimeUpdate.WaitForLastPresentationAndUpdateTime`, where Unity sleeps to the target frame rate. An idle 30 Hz server (33 ms frames, ~3 % CPU) counted that sleep against the 8 ms budget, and 99.9 % of frames were refused (`idle_pregen_busy_frames`).
+  - The stamp now follows that sleep (label `idle_pregen_frame_stamp`). A refused frame now shows as `waiting_frame_budget` or `waiting_busy_frame`; before, the previous status (`start_delay`) stayed displayed.
+- Hourly asset unload deferral: on a dedicated server, the `MaxDeferMinutes` cap now counts from when players arrived, if that is later than the last unload.
+  - Before, an unload done on the empty server before play started the clock: on 2026-09-24 that forced an unload mid-session, 97 min into play. Gauge `asset_unload_since_play_s`.
+  - Clients are unchanged.
+- Captures: when the directory allowance is reached, the plugin deletes its own oldest captures and keeps recording (`[Capture] PurgeOldestWhenFull`, default on). Before, recording stopped: on 2026-09-24 a client lost its last 13 minutes. Only files with the plugin's own naming are deleted.
+- The server trims `captures/remote` to three quarters of `[Relay] MaxDirectoryMiB` at startup, oldest first (`PurgeOldestAtStart`, default on). Before, a full directory would stop every client's relay.
+
 ### 0.4.16
 
 - Add opt-in deferral of the game's hourly unused-asset unload (`[Memory] DeferHourlyAssetUnloadEnabled`, `MaxDeferMinutes` 120). On 2026-09-23 the three loop gaps with no attributed method (306 ms server, 332 and 167 ms clients) were `Game.CollectResourcesCheckPeriodic`, scheduled every 3600 s, calling `Resources.UnloadUnusedAssets`. A client now leaves the unload to the native sleep, respawn and idle-pause checks; a dedicated server runs it once no peer is connected. Past the cap, vanilla runs it anyway. Gauges: `asset_unload_*`.

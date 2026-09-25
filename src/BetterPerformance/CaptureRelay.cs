@@ -36,7 +36,7 @@ namespace BetterPerformance
         private static readonly RelayLineBatcher LogLines = new RelayLineBatcher();
         private static readonly Dictionary<ZRpc, RelaySink> Sinks = new Dictionary<ZRpc, RelaySink>();
         private static readonly Stopwatch Clock = Stopwatch.StartNew();
-        private static ConfigEntry<bool>? sendCaptures, sendLog, accept;
+        private static ConfigEntry<bool>? sendCaptures, sendLog, accept, purgeAtStart;
         private static ConfigEntry<int>? directoryLimit, rateLimit;
         private static ManualLogSource? log;
         private static LogMirror? mirror;
@@ -75,7 +75,9 @@ namespace BetterPerformance
                 accept = config.Bind("Relay", "AcceptEnabled", false,
                     "Server: accept relayed captures and logs from clients into BepInEx/BetterPerformance/captures/remote. Requires a restart.");
                 directoryLimit = config.Bind("Relay", "MaxDirectoryMiB", 1024, new ConfigDescription(
-                    "Server: total size allowed under captures/remote. A stream that would exceed it is closed with a trailer; existing files are never deleted.", new AcceptableValueRange<int>(64, 16384)));
+                    "Server: total size allowed under captures/remote. A stream that would exceed it is closed with a trailer. See PurgeOldestAtStart.", new AcceptableValueRange<int>(64, 16384)));
+                purgeAtStart = config.Bind("Relay", "PurgeOldestAtStart", true,
+                    "Server: at startup, delete the oldest relayed files until captures/remote holds at most three quarters of MaxDirectoryMiB. Off: never delete; relaying stops once the directory is full.");
                 rateLimit = config.Bind("Relay", "MaxBytesPerSecond", 65536, new ConfigDescription(
                     "Client: cap on relayed bytes per second, on top of the idle-socket rule.", new AcceptableValueRange<int>(8192, 1048576)));
                 if (!sendCaptures.Value && !sendLog.Value && !accept.Value) { Installed = false; Status = "disabled"; return; }
@@ -83,7 +85,16 @@ namespace BetterPerformance
                 remoteDirectory = Path.Combine(captureDirectory, "remote");
                 Patches.Patch(Contract.NewConnection!, postfix: new HarmonyMethod(typeof(CaptureRelay), nameof(AfterNewConnection)));
                 Patches.Patch(Contract.Disconnect!, postfix: new HarmonyMethod(typeof(CaptureRelay), nameof(AfterDisconnect)));
-                if (accept.Value) quota = new RelayQuota(directoryLimit.Value * 1024L * 1024L, DirectorySize(remoteDirectory));
+                if (accept.Value)
+                {
+                    long limit = directoryLimit.Value * 1024L * 1024L;
+                    if (purgeAtStart.Value)
+                    {
+                        CaptureStorage.TrimTo(remoteDirectory, limit / 4 * 3, out int deleted, out long freed);
+                        if (deleted > 0) logger.LogInfo("Capture relay: deleted the " + deleted + " oldest relayed files (" + (freed / (1024 * 1024)) + " MiB).");
+                    }
+                    quota = new RelayQuota(limit, DirectorySize(remoteDirectory));
+                }
                 if (sendLog.Value) StartLogMirror();
                 Installed = true;
                 failed = false;
@@ -407,7 +418,7 @@ namespace BetterPerformance
             Installed = false;
             failed = false;
             Status = "disabled";
-            sendCaptures = null; sendLog = null; accept = null; directoryLimit = null; rateLimit = null;
+            sendCaptures = null; sendLog = null; accept = null; purgeAtStart = null; directoryLimit = null; rateLimit = null;
             quota = null;
             Interlocked.Exchange(ref failureTotal, 0);
         }

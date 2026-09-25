@@ -13,16 +13,16 @@ Vanilla already unloads at calm moments through `CollectResourcesCheck` (1,200 s
 A prefix on `CollectResourcesCheckPeriodic` decides (`AssetUnloadPolicy`):
 
 - last unload ≤ 3,599 s old: vanilla runs and only logs a skip;
-- older than `MaxDeferMinutes`: vanilla runs, whatever the role;
+- empty dedicated server: vanilla runs;
+- deferred for `MaxDeferMinutes`: vanilla runs. The deferral counts from the last unload or, on a server, from when players arrived if that is later: an unload done on the empty server before play would otherwise bring the cap into the session (2026-09-24: empty-server unload 17:39, players 18:02, capped unload in play 19:39);
 - client: skip. The next sleep, respawn or idle pause unloads through the native check;
-- dedicated server with a peer connected or joining: skip, then unload from `Plugin.Update` (checked every 5 s) once `GetPeers()` is empty;
-- empty dedicated server: vanilla runs.
+- dedicated server with a peer connected or joining: skip, then unload from `Plugin.Update` (checked every 5 s) once `GetPeers()` is empty.
 
 Nothing is dropped. The unload itself is unchanged.
 
 ## Gauges
 
-`asset_unload_deferred`, `asset_unload_capped`, `asset_unload_idle_runs`, `asset_unload_native_runs`, `asset_unload_pending`, `asset_unload_since_last_s`; label `asset_unload_status`. Each unload still prints the native `Unloading unused assets` log line.
+`asset_unload_deferred`, `asset_unload_capped`, `asset_unload_idle_runs`, `asset_unload_native_runs`, `asset_unload_pending`, `asset_unload_since_last_s`, `asset_unload_since_play_s` (server, while peers are connected); label `asset_unload_status`. Each unload still prints the native `Unloading unused assets` log line.
 
 ## Limits
 

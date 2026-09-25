@@ -17,12 +17,12 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.16";
+        public const string PluginVersion = "0.4.17";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
         private ConfigEntry<bool> captureEnabled = null!, autoStart = null!, methodTimings = null!;
-        private ConfigEntry<bool> continuous = null!;
+        private ConfigEntry<bool> continuous = null!, purgeOldest = null!;
         private ConfigEntry<bool> slowOperations = null!;
         private ConfigEntry<float> slowMethodMs = null!, slowLoopMs = null!, slowWorkerMs = null!;
         private ConfigEntry<int> directoryLimit = null!;
@@ -47,8 +47,9 @@ namespace BetterPerformance
             mainThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
             captureEnabled = Config.Bind("Capture", "Enabled", true, "Enable diagnostics. Does not change gameplay or networking.");
             autoStart = Config.Bind("Capture", "AutoStart", true, "Start a capture when each world session begins.");
-            continuous = Config.Bind("Capture", "Continuous", false, "Continue with a new file after the duration/file limit in the same world. Manual stop, errors and the directory limit stop recording.");
-            directoryLimit = Config.Bind("Capture", "MaxDirectoryMiB", 512, new ConfigDescription("Maximum JSONL capture directory allowance. Reserve the next file's full allowance or stop without deleting existing captures. One process per directory.", new AcceptableValueRange<int>(64, 4096)));
+            continuous = Config.Bind("Capture", "Continuous", false, "Continue with a new file after the duration/file limit in the same world. Manual stop and errors stop recording, as does the directory limit when PurgeOldestWhenFull is off.");
+            directoryLimit = Config.Bind("Capture", "MaxDirectoryMiB", 512, new ConfigDescription("Maximum JSONL capture directory allowance. Each new capture reserves its full file allowance first (see PurgeOldestWhenFull). One process per directory.", new AcceptableValueRange<int>(64, 4096)));
+            purgeOldest = Config.Bind("Capture", "PurgeOldestWhenFull", true, "When the directory allowance is reached, delete this plugin's oldest captures to keep recording. Off: stop recording and keep every file.");
             duration = Config.Bind("Capture", "DurationSeconds", 300, new ConfigDescription("Maximum duration of each capture.", new AcceptableValueRange<int>(10, 3600)));
             interval = Config.Bind("Capture", "IntervalSeconds", 1f, new ConfigDescription("Aggregation and process polling interval.", new AcceptableValueRange<float>(0.5f, 10f)));
             capacity = Config.Bind("Capture", "QueueCapacity", 16, new ConfigDescription("Maximum queued export records. Full queues drop records without blocking.", new AcceptableValueRange<int>(2, 64)));
@@ -334,11 +335,23 @@ namespace BetterPerformance
             if (ZNet.instance == null) { Logger.LogInfo("Enter a world before starting a capture."); return; }
             observedWorld = ZNet.instance;
             string directory = Path.Combine(Paths.BepInExRootPath, "BetterPerformance", "captures");
-            if (!CaptureStorage.HasCapacity(directory, fileLimit.Value * 1024L * 1024L, directoryLimit.Value * 1024L * 1024L))
+            long fileBytes = fileLimit.Value * 1024L * 1024L, directoryBytes = directoryLimit.Value * 1024L * 1024L;
+            if (!CaptureStorage.HasCapacity(directory, fileBytes, directoryBytes))
             {
-                continuePending = false;
-                Logger.LogWarning("Recording stopped at the capture directory allowance. Archive captures, then use bp_capture start or restart. Existing captures were preserved.");
-                return;
+                int deleted = 0;
+                long freed = 0;
+                bool room = false;
+                try { room = purgeOldest.Value && CaptureStorage.MakeRoom(directory, fileBytes, directoryBytes, out deleted, out freed); }
+                catch (Exception exception) { Logger.LogWarning("Capture purge failed: " + exception.GetType().Name); }
+                if (deleted > 0)
+                    Logger.LogInfo("Capture directory full: deleted the " + deleted + " oldest captures (" + (freed / (1024 * 1024)) + " MiB).");
+                if (!room)
+                {
+                    continuePending = false;
+                    Logger.LogWarning("Recording stopped at the capture directory allowance. Archive captures, then use bp_capture start or restart."
+                        + (purgeOldest.Value ? " Deleting old captures did not free enough room." : " Existing captures were preserved."));
+                    return;
+                }
             }
             var metadata = new List<TextValue>(TimingHooks.Availability)
             {

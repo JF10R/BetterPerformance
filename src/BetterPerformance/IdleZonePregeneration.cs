@@ -63,6 +63,7 @@ namespace BetterPerformance
         internal static bool Installed { get; private set; }
         internal static string Status { get; private set; } = "disabled";
         internal static string Store { get; private set; } = "none";
+        internal static string StampPlacement { get; private set; } = "none";
 
         internal static void Install(ConfigFile config, ManualLogSource logger)
         {
@@ -164,22 +165,36 @@ namespace BetterPerformance
 
         private struct FrameStartStamp { }
 
-        // First entry of the first player-loop phase, so the stamp precedes every script update.
+        // Right after TimeUpdate.WaitForLastPresentationAndUpdateTime, where Unity sleeps to the target
+        // frame rate: stamped before it, an idle 30 Hz server counted ~30 ms of sleep against the
+        // budget and refused nearly every frame (2026-09-24). Fallback: head of Initialization.
         private static bool InstallFrameStamp()
         {
             try
             {
                 PlayerLoopSystem root = PlayerLoop.GetCurrentPlayerLoop();
                 if (root.subSystemList == null || root.subSystemList.Length == 0) return false;
-                PlayerLoopSystem first = root.subSystemList[0];
-                var systems = new List<PlayerLoopSystem>(first.subSystemList ?? Array.Empty<PlayerLoopSystem>());
-                systems.Insert(0, new PlayerLoopSystem { type = typeof(FrameStartStamp), updateDelegate = StampFrame });
-                first.subSystemList = systems.ToArray();
-                root.subSystemList[0] = first;
+                int phaseIndex = -1, insertAt = 0;
+                for (int i = 0; i < root.subSystemList.Length && phaseIndex < 0; i++)
+                {
+                    PlayerLoopSystem[]? systems = root.subSystemList[i].subSystemList;
+                    for (int j = 0; systems != null && j < systems.Length; j++)
+                        if (systems[j].type == typeof(UnityEngine.PlayerLoop.TimeUpdate.WaitForLastPresentationAndUpdateTime))
+                        { phaseIndex = i; insertAt = j + 1; StampPlacement = "after_frame_pacing"; break; }
+                }
+                for (int i = 0; i < root.subSystemList.Length && phaseIndex < 0; i++)
+                    if (root.subSystemList[i].type == typeof(UnityEngine.PlayerLoop.Initialization))
+                    { phaseIndex = i; insertAt = 0; StampPlacement = "initialization_head"; }
+                if (phaseIndex < 0) { StampPlacement = "missing"; return false; }
+                PlayerLoopSystem phase = root.subSystemList[phaseIndex];
+                var list = new List<PlayerLoopSystem>(phase.subSystemList ?? Array.Empty<PlayerLoopSystem>());
+                list.Insert(insertAt, new PlayerLoopSystem { type = typeof(FrameStartStamp), updateDelegate = StampFrame });
+                phase.subSystemList = list.ToArray();
+                root.subSystemList[phaseIndex] = phase;
                 PlayerLoop.SetPlayerLoop(root);
                 return true;
             }
-            catch { return false; }
+            catch { StampPlacement = "missing"; return false; }
         }
 
         private static void RemoveFrameStamp()
@@ -258,11 +273,12 @@ namespace BetterPerformance
             {
                 lastGeneratedCount = set.Count;
                 Interlocked.Increment(ref busyFrames);
+                Status = "waiting_busy_frame";
                 return;
             }
             if (!fresh) Interlocked.Increment(ref clockMissing);
             else if ((Stopwatch.GetTimestamp() - frameStart) * 1000.0 / Stopwatch.Frequency > frameBudgetMs!.Value)
-            { Interlocked.Increment(ref busyFrames); return; }
+            { Interlocked.Increment(ref busyFrames); Status = "waiting_frame_budget"; return; }
             Status = "generating";
             GenerateOne(zones);
             lastGeneratedCount = set.Count;
@@ -436,6 +452,7 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("idle_pregen_activity_zones", Activity.Count, "zones"));
             gauges.Add(new NumberValue("idle_pregen_run_total", runGenerated, "zones"));
             labels.Add(new TextValue("idle_pregen_store", Store));
+            labels.Add(new TextValue("idle_pregen_frame_stamp", StampPlacement));
         }
 
         internal static void Reset()
@@ -459,6 +476,7 @@ namespace BetterPerformance
                 if (dirty) Save(Clock.Elapsed.TotalSeconds);
             }
             RemoveFrameStamp();
+            StampPlacement = "none";
             try { Patches.UnpatchSelf(); } catch { }
             Reset();
             Release("disabled");

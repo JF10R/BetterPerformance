@@ -21,14 +21,20 @@ namespace BetterPerformance.Core
         // The native periodic check unloads once the last unload is this old.
         public const double NativePeriodSeconds = 3599;
 
-        public static AssetUnloadDecision Periodic(double secondsSinceLastUnload, double maxDeferSeconds, bool dedicatedServer, int peers)
+        // secondsSincePlayStarted: on a server, how long peers have been connected without a
+        // break (infinity when unknown, and on a client). The cap counts from the later of the last
+        // unload and that start: an unload done on an empty server must not bring it forward.
+        public static AssetUnloadDecision Periodic(double secondsSinceLastUnload, double secondsSincePlayStarted,
+            double maxDeferSeconds, bool dedicatedServer, int peers)
         {
             if (maxDeferSeconds < NativePeriodSeconds) throw new ArgumentOutOfRangeException(nameof(maxDeferSeconds));
             if (!(secondsSinceLastUnload > NativePeriodSeconds)) return AssetUnloadDecision.NativeSkips;
-            if (secondsSinceLastUnload >= maxDeferSeconds) return AssetUnloadDecision.RunCapped;
             // An empty dedicated server has nobody to stall. A client always defers: its native
             // sleep, respawn and idle-pause checks unload at the next calm moment.
             if (dedicatedServer && peers == 0) return AssetUnloadDecision.RunNative;
+            double deferred = secondsSinceLastUnload;
+            if (secondsSincePlayStarted >= 0 && secondsSincePlayStarted < deferred) deferred = secondsSincePlayStarted;
+            if (deferred >= maxDeferSeconds) return AssetUnloadDecision.RunCapped;
             return AssetUnloadDecision.Defer;
         }
 

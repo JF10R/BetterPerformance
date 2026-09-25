@@ -41,8 +41,8 @@ Capture starts automatically in each world session and continues through loading
 Each installation writes JSONL to `BepInEx/BetterPerformance/captures/`. No uploads occur. Exports normally occur every two seconds and aggregate every measured method call; short peaks remain in the interval maximum. Costly polls can lengthen the export interval as described below. Loot queue scans have their own 250 ms sampling interval.
 
 - One background writer, at most 16 queued records; full queues drop records and report the loss.
-- Maximum 32 MiB per file and a 512 MiB JSONL allowance per installation. The next file's full allowance must fit; otherwise recording stops with a BepInEx warning. Existing files are never deleted automatically. Use one process per output directory.
-- Archive older captures to another directory before exhausting the allowance. Restart, or use `bp_capture start`, to resume after making room.
+- Maximum 32 MiB per file and a 512 MiB JSONL allowance per installation. The next file's full allowance must fit. With `PurgeOldestWhenFull` (default on) the plugin deletes its own oldest captures to make room; other files are never touched. Off, recording stops with a BepInEx warning. Use one process per output directory.
+- Archive captures you want to keep to another directory. With the purge off, restart or use `bp_capture start` to resume after making room.
 - Manual stop, collector/writer failure and world exit stop the current recording. A new world can auto-start a new session. No automatic retry loop after an error.
 - Shutdown allows two seconds for export. Forced termination, disk errors, queue overflow and a hard file limit can leave incomplete data. A hard-limit segment can lack `capture_end`, including its final loot censor counters; the writer footer and report warnings identify this limitation. Normal duration rotation exports the final counters before closing.
 

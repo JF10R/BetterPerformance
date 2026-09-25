@@ -56,7 +56,7 @@ internal static class AssetUnloadGameTests
         // 3. The policy the prefix applies.
         Type policy = plugin.GetType("BetterPerformance.Core.AssetUnloadPolicy", true)!;
         MethodInfo decide = policy.GetMethod("Periodic", BindingFlags.Public | BindingFlags.Static)!;
-        string Decide(double since, bool dedicated, int peers) => decide.Invoke(null, new object[] { since, 7200.0, dedicated, peers })!.ToString()!;
+        string Decide(double since, bool dedicated, int peers) => decide.Invoke(null, new object[] { since, double.PositiveInfinity, 7200.0, dedicated, peers })!.ToString()!;
         Check(Decide(3700, false, 1) == "Defer" && Decide(3700, true, 0) == "RunNative" && Decide(7300, true, 3) == "RunCapped" &&
             Decide(100, true, 0) == "NativeSkips", "the policy defers in play, runs on an empty server and at the cap");
         return checks;

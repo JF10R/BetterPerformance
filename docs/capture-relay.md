@@ -12,7 +12,8 @@ the same way. Config section `[Relay]`, every key off by default, all need a res
 | `SendCapturesEnabled` | client | Stream each capture record as the writer puts it on disk. |
 | `SendLogEnabled` | client | Also stream the BepInEx log: a bounded snapshot of what is already on disk at plugin start (the disk listener is flushed first), then live lines at Info and above from every log source. The relayed copy is a superset of `LogOutput.log`: it includes the game's own Unity log lines (`ZLog`, errors and warnings included), which BepInEx omits from the disk log by default. The log names Steam IDs, characters and worlds; enable it only towards a server you trust. |
 | `AcceptEnabled` | server | Accept relayed files into `captures/remote`. |
-| `MaxDirectoryMiB` | server | Total allowance under `captures/remote` (default 1024). A stream that would exceed it is closed with a trailer; nothing is deleted. |
+| `MaxDirectoryMiB` | server | Total allowance under `captures/remote` (default 1024). A stream that would exceed it is closed with a trailer. |
+| `PurgeOldestAtStart` | server | At startup, delete the oldest relayed files until `captures/remote` holds at most three quarters of `MaxDirectoryMiB` (default on). |
 | `MaxBytesPerSecond` | client | Cap on relayed bytes per second (default 65,536), on top of the idle-socket rule below. |
 
 ## Why a trickle and not "on exit" or "on save"
