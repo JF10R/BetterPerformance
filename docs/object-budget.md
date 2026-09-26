@@ -12,6 +12,8 @@ At least one **successful** creation is allowed per batch that has a creatable c
 
 This is not a hard frame-time cap. Scanning, sorting, readiness work, invalid-prefab attempts and a single expensive object can exceed the budget. Near work may consume the shared allowance before distant objects receive time. Loading, teleport completion and item availability can become slower. Those tradeoffs require measurement.
 
+Since 0.4.18, `UnbudgetedInLoadingScreen` (default on) leaves creation to vanilla whenever the game counts a loading screen: no local player yet, or a teleport in progress (the test of `ZNetScene.InLoadingScreen`, where vanilla raises its quota to 100). Those frames are hidden, so the budget there only lengthened the wait. Gauge `object_budget_loading_screen_batches_total`; see [teleport loading](teleport-loading.md).
+
 ### Configuration
 
 In `BepInEx/config/jf10r.BetterPerformance.cfg`:

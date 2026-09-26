@@ -14,7 +14,8 @@ using UnityEngine;
 
 namespace BetterPerformance
 {
-    // Initial remote-client spawn only. All actual zone construction remains native.
+    // Initial remote-client spawn and, since 0.4.18, a distant teleport's loading screen after the move
+    // (TeleportZonePreparation). All actual zone construction remains native.
     internal static class InitialLoadingOptimization
     {
         private static readonly Harmony Patches = new Harmony(Plugin.PluginId + ".InitialLoading");
@@ -30,16 +31,21 @@ namespace BetterPerformance
         private static WeakReference? episodeGame;
         private static long sequence, calls, firstSuccesses, extraCalls, extraSuccesses, noProgress, budgetStops, capStops, contextStops, failures;
         private static double totalMs, maxMs, extraMs, extraMaxMs;
+        // Teleport bursts: per-interval counters, taken by Sample.
+        private const int TeleportMaxPasses = 16;
+        private static long teleportCalls, teleportExtraSuccesses, teleportBudgetStops, teleportNoProgress, teleportCapStops;
+        private static double teleportMaxMs;
         private static string startedUtc = "unobserved";
         internal static string Status { get; private set; } = "disabled_at_startup";
         internal static bool Installed { get; private set; }
         internal static bool Enabled => Installed && enabled != null && enabled.Value && Status == "installed";
+        internal static bool TeleportEnabled => Installed && Status == "installed" && TeleportZonePreparation.BurstEnabled;
 
         internal static void Install(ConfigFile config, ManualLogSource logger)
         {
             enabled = config.Bind("InitialLoading", "Enabled", false,
-                "Experimental faster initial join to a remote server. Up to four native zone passes with a soft 8 ms budget; may increase loading frame cost. Set false and restart the client to disable. Does not accelerate dedicated/listen servers, deaths or teleports.");
-            if (!enabled.Value) return;
+                "Experimental faster initial join to a remote server. Up to four native zone passes with a soft 8 ms budget; may increase loading frame cost. Set false and restart the client to disable. Does not accelerate dedicated/listen servers or deaths; teleports have [Teleport] ZoneBurstEnabled.");
+            if (!enabled.Value && !TeleportZonePreparation.BurstEnabled) return;
             try
             {
                 ownerThread = Thread.CurrentThread.ManagedThreadId;
@@ -48,7 +54,7 @@ namespace BetterPerformance
                 firstSpawn = AccessTools.FieldRefAccess<Game, bool>("m_firstSpawn");
                 Patches.Patch(Update, transpiler: new HarmonyMethod(typeof(InitialLoadingOptimization), nameof(Transpile)));
                 Installed = true; Status = "installed";
-                logger.LogInfo("Initial loading acceleration installed (client initial spawn only).");
+                logger.LogInfo("Initial loading acceleration installed (client initial spawn: " + enabled.Value + "; distant teleports: " + TeleportZonePreparation.BurstEnabled + ").");
             }
             catch (Exception error)
             {
@@ -120,7 +126,9 @@ namespace BetterPerformance
         private static bool CreateLocalZoneBurst(ZoneSystem zones, Vector3 point)
         {
             // Disabled, nested and ordinary gameplay calls have no clocks or patch scans.
-            if (!Enabled || inCall || Thread.CurrentThread.ManagedThreadId != ownerThread) return native(zones, point);
+            if ((!Enabled && !TeleportEnabled) || inCall || Thread.CurrentThread.ManagedThreadId != ownerThread) return native(zones, point);
+            if (TeleportEnabled && TeleportScreen(zones, point)) return TeleportBurst(zones, point);
+            if (!Enabled) return native(zones, point);
             var game = Game.instance;
             var network = ZNet.instance;
             bool eligible;
@@ -173,12 +181,62 @@ namespace BetterPerformance
             }
         }
 
+        private static bool TeleportScreen(ZoneSystem zones, Vector3 point)
+        {
+            try
+            {
+                ZNet network = ZNet.instance;
+                return network != null && ReferenceEquals(ZoneSystem.instance, zones) && !network.IsServer() &&
+                    point.Equals(network.GetReferencePosition()) && TeleportZonePreparation.MovedDistant(point) && !ConflictingPatches();
+            }
+            catch { Status = "native_due_to_guard_failure"; return false; }
+        }
+
+        // Same shape as the join burst: the native call once, then more passes while each creates a
+        // zone, under a larger allowance since the loading screen hides these frames.
+        private static bool TeleportBurst(ZoneSystem zones, Vector3 point)
+        {
+            long started = Stopwatch.GetTimestamp();
+            inCall = true;
+            teleportCalls++;
+            try
+            {
+                if (!native(zones, point)) { teleportNoProgress++; return false; }
+                for (int pass = 1; pass < TeleportMaxPasses; pass++)
+                {
+                    if (MillisecondsSince(started) >= TeleportZonePreparation.BurstMilliseconds) { teleportBudgetStops++; return true; }
+                    if (!TeleportZonePreparation.MovedDistant(point)) return true;
+                    if (!native(zones, point)) { teleportNoProgress++; return true; }
+                    teleportExtraSuccesses++;
+                }
+                teleportCapStops++;
+                return true;
+            }
+            catch { failures++; throw; }
+            finally
+            {
+                inCall = false;
+                teleportMaxMs = Math.Max(teleportMaxMs, MillisecondsSince(started));
+            }
+        }
+
         private static double MillisecondsSince(long started) => (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
 
         internal static void Sample(List<NumberValue> gauges, List<TextValue> labels)
         {
             labels.Add(new TextValue("initial_loading_status", Status));
             labels.Add(new TextValue("initial_loading_enabled", Enabled ? "true" : "false"));
+            if (TeleportEnabled)
+            {
+                gauges.Add(new NumberValue("teleport_zone_burst_calls", teleportCalls, "calls"));
+                gauges.Add(new NumberValue("teleport_zone_burst_extra_zones", teleportExtraSuccesses, "zones"));
+                gauges.Add(new NumberValue("teleport_zone_burst_budget_stops", teleportBudgetStops, "calls"));
+                gauges.Add(new NumberValue("teleport_zone_burst_no_progress", teleportNoProgress, "calls"));
+                gauges.Add(new NumberValue("teleport_zone_burst_cap_stops", teleportCapStops, "calls"));
+                gauges.Add(new NumberValue("teleport_zone_burst_max_ms", Math.Round(teleportMaxMs, 1), "ms"));
+                teleportCalls = teleportExtraSuccesses = teleportBudgetStops = teleportNoProgress = teleportCapStops = 0;
+                teleportMaxMs = 0;
+            }
             labels.Add(new TextValue("initial_loading_semantics", "latest_initial_join_cumulative; extra_successes_are_zone_registrations_not_objects_or_time_saved; inclusive_elapsed_not_CPU; soft_8ms_total_max_4_passes"));
             if (sequence == 0) return;
             labels.Add(new TextValue("initial_loading_started_utc", startedUtc));

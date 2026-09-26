@@ -38,6 +38,13 @@ namespace BetterPerformance.Core
             return AssetUnloadDecision.Defer;
         }
 
+        // A distant teleport keeps the loading screen up after the move (2 s) until the area is
+        // ready: the one hidden moment a client meets often. The native 1200 s check then decides.
+        public const double TeleportMoveSeconds = 2;
+
+        public static bool OfferDuringTeleport(bool distant, double teleportSeconds, bool areaReady, bool offered) =>
+            distant && !offered && areaReady && teleportSeconds > TeleportMoveSeconds;
+
         // A deferred server unload runs once the server is empty, unless an unload already happened.
         public static bool RunDeferredOnServer(bool pending, double secondsSinceLastUnload, int peers) =>
             pending && peers == 0 && secondsSinceLastUnload > NativePeriodSeconds;

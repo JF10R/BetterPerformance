@@ -27,6 +27,13 @@ internal static class AssetUnloadPolicyTests
         Check(!AssetUnloadPolicy.RunDeferredOnServer(true, 4000, 1), "not while a peer is connected or joining");
         Check(!AssetUnloadPolicy.RunDeferredOnServer(false, 4000, 0), "nothing pending, nothing to run");
         Check(!AssetUnloadPolicy.RunDeferredOnServer(true, 100, 0), "an unload that already happened clears the need");
+
+        Check(AssetUnloadPolicy.OfferDuringTeleport(true, 3.1, true, false), "a distant teleport offers the unload once the area is ready");
+        Check(!AssetUnloadPolicy.OfferDuringTeleport(false, 3.1, true, false), "a short teleport shows no loading screen");
+        Check(!AssetUnloadPolicy.OfferDuringTeleport(true, 1.9, true, false), "not before the move: the old area is still referenced");
+        Check(!AssetUnloadPolicy.OfferDuringTeleport(true, 3.1, false, false), "not while the destination is still loading");
+        Check(!AssetUnloadPolicy.OfferDuringTeleport(true, 3.1, true, true), "at most once per teleport");
+        Check(!AssetUnloadPolicy.OfferDuringTeleport(true, double.NaN, true, false), "an unreadable timer offers nothing");
     }
 
     private static bool Throws(Action action)

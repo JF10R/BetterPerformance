@@ -164,6 +164,13 @@ begin.Invoke(null, outerState);
 budget = budgetField.GetValue(current.GetValue(null))!;
 Check((int)budget.GetType().GetProperty("Attempts")!.GetValue(budget)! == 0, "new batch starts with fresh counters");
 end.Invoke(null, outerState);
+var loadingScreen = patchType.GetField("loadingScreen", privateStatic)!;
+Check(loadingScreen.GetValue(null) == null, "an uninstalled budget never probes the loading screen");
+loadingScreen.SetValue(null, new Func<bool>(() => true));
+begin.Invoke(null, outerState);
+Check(!(bool)active.GetValue(current.GetValue(null))!, "a loading screen leaves creation unbudgeted");
+end.Invoke(null, outerState);
+loadingScreen.SetValue(null, null);
 var quotaOption = config.Bind("ObjectLoading", "AdaptiveCreationQuota", false);
 var quotaHook = patchType.GetMethod("ExpandQuota", privateStatic)!;
 object[] allowance = { 10 };
@@ -304,6 +311,8 @@ Module("Smelter", () => SmelterGameTests.Run(game, plugin));
 Module("Dungeon", () => DungeonGameTests.Run(game, plugin));
 Module("IdlePregeneration", () => IdlePregenerationGameTests.Run(game, plugin));
 Module("AssetUnload", () => AssetUnloadGameTests.Run(game, plugin));
+Module("Teleport", () => TeleportGameTests.Run(game, plugin));
+Module("TerrainPaintOnly", () => TerrainPaintOnlyGameTests.Run(game, plugin));
 Module("MapPrecompression", () => MapPrecompressionGameTests.Run(game, plugin));
 if (contractFailures.Count > 0)
 {

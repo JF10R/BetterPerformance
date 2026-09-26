@@ -24,6 +24,9 @@ namespace BetterPerformance
         private static ConfigEntry<int> expandedQuota = null!;
         private static ConfigEntry<bool> budgetAfterNearPreparation = null!;
         private static ConfigEntry<bool> telemetryEnabled = null!;
+        private static ConfigEntry<bool> unbudgetedInLoadingScreen = null!;
+        // Set only once the patches install in game, so the offline harness never loads Player.
+        private static Func<bool>? loadingScreen;
         private static ManualLogSource logger = null!;
         private static CaptureSession? telemetryCapture;
         private static WeakReference<ZNetScene>? telemetryScene;
@@ -34,7 +37,8 @@ namespace BetterPerformance
         internal static bool Enabled { get; set; }
         internal static string Status { get; private set; } = "disabled";
         [ThreadStatic] private static Batch current;
-        private static long batches, attempts, yields, quotaExpansions;
+        private static long batches, attempts, yields, quotaExpansions, loadingScreenBatches;
+        internal static long Yields => yields;
         private static long preparationBatches, preparationUnavailable, rebasedBatches, serviceOvershoots;
         private static double preparationSumMs, preparationMaxMs, serviceSumMs, serviceMaxMs;
 
@@ -75,6 +79,8 @@ namespace BetterPerformance
                 "Experimental: start the shared creation allowance at the first verified near-creation gate, after near preparation. Whole batches can exceed BudgetMilliseconds by preparation time; distant creation shares the same clock. Does not cache scans/sorts or change quotas/readiness. Unverified near gates retain the whole-batch clock.");
             telemetryEnabled = config.Bind("Diagnostics", "BudgetTradeoffEnabled", true,
                 "Observe budget-active batch/creation costs and bounded next-candidate waits after budget yields while capturing. Waits are not causal added latency; requires restart.");
+            unbudgetedInLoadingScreen = config.Bind("ObjectLoading", "UnbudgetedInLoadingScreen", true,
+                "Leave object creation to vanilla (100 per frame) whenever the game itself counts a loading screen: no local player yet, or a teleport in progress. The screen hides those frames, so the budget there only lengthens the wait.");
             LootCreationPriority.Configure(config, logger);
             if (!requested.Value) return;
             try
@@ -93,6 +99,7 @@ namespace BetterPerformance
                     finalizer: new HarmonyMethod(typeof(ObjectCreationBudget), nameof(End)));
                 Installed = Enabled = true;
                 Status = "installed";
+                if (unbudgetedInLoadingScreen.Value) loadingScreen = InLoadingScreen;
                 InstallTelemetry();
                 logger.LogWarning("Experimental object creation budget installed; soft limit " + milliseconds.Value + " ms. Loading latency may increase.");
             }
@@ -139,6 +146,7 @@ namespace BetterPerformance
             }
             float value = milliseconds.Value;
             if (!Enabled || float.IsNaN(value) || float.IsInfinity(value) || value < 1 || value > 20) return;
+            if (loadingScreen != null && loadingScreen()) { loadingScreenBatches++; return; }
             long started = Stopwatch.GetTimestamp();
             current = new Batch { Active = true, Started = started, AllowanceMs = value,
                 Budget = new CreationBudget(started, (long)(value * Stopwatch.Frequency / 1000.0)),
@@ -174,6 +182,13 @@ namespace BetterPerformance
             }
             catch (Exception exception) { FailTelemetry(exception); }
             finally { current = __state; }
+        }
+
+        // Same test as the private ZNetScene.InLoadingScreen that raises the vanilla quota to 100.
+        private static bool InLoadingScreen()
+        {
+            Player player = Player.m_localPlayer;
+            return player == null || player.IsTeleporting();
         }
 
         private static UnityEngine.GameObject? Created(UnityEngine.GameObject? created)
@@ -405,6 +420,8 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("object_budget_batches_total", batches, "batches"));
             gauges.Add(new NumberValue("object_budget_attempts_total", attempts, "objects"));
             gauges.Add(new NumberValue("object_budget_yields_total", yields, "loop_exits"));
+            gauges.Add(new NumberValue("object_budget_loading_screen_batches_total", loadingScreenBatches, "batches"));
+            labels.Add(new TextValue("object_budget_unbudgeted_in_loading_screen", unbudgetedInLoadingScreen.Value ? "true" : "false"));
             labels.Add(new TextValue("adaptive_creation_quota_enabled", Enabled && adaptiveQuota.Value ? "true" : "false"));
             labels.Add(new TextValue("budget_after_near_preparation_enabled", Enabled && budgetAfterNearPreparation.Value ? "true" : "false"));
             gauges.Add(new NumberValue("expanded_creation_quota", expandedQuota.Value, "objects"));
@@ -489,6 +506,7 @@ namespace BetterPerformance
         internal static void Uninstall()
         {
             Enabled = Installed = false;
+            loadingScreen = null;
             Patches.UnpatchSelf();
             TelemetryPatches.UnpatchSelf();
             ResetTelemetry();

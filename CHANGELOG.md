@@ -1,5 +1,16 @@
 # Changelog
 
+### 0.4.18
+
+- Hourly asset unload deferral: a client now also offers the game's own unload check during a distant teleport (`[Memory] UnloadDuringTeleport`, default on). It runs once per teleport, after the move and once the destination area is ready, still behind the loading screen, and only if the last unload is over 20 min old, as vanilla does at sleep and respawn.
+  - Why: on 2026-09-25 neither player slept or died for two hours, and the 120-min cap forced the unload in play on both clients (197 and 319 ms, their worst stalls of the evening), 1-2 min before their next portal.
+  - Gauges `asset_unload_teleport_runs`, `asset_unload_teleport_ms_max`.
+- Add a teleport loading timeline (`[Diagnostics] TeleportLoadingEnabled`, default on, observes only): per teleport, the time to the move, destination zone, active area, objects ready (`IsAreaReady`), floor and end, plus `teleport_ready_wait_ms`, the time spent after readiness, which on a portal is the fixed 8 s floor. Gauges `teleport_*`, docs/teleport-loading.md.
+- Add opt-in fast portal arrival (`[Teleport] FastArrivalEnabled`, `MinimumSeconds` 3, `SettleSeconds` 0.75, `NearRadius` 80 m). A distant teleport ends before vanilla's fixed 8 s once everything near the player is loaded: zones, every received object of the 3×3 zones, ground, no queued terrain rebuild, grass patches, no dungeon being sliced, and the destination's object count unchanged for `SettleSeconds` (the server has finished sending). Vanilla's own `IsAreaReady` and `FindFloor` still run on the ending frame; a teleport is never held longer than vanilla. Gauges `fast_arrival_*`, including what held a teleport that kept the floor. Grass around the destination is built in one frame under the loading screen (the game's own full rebuild), instead of one patch per frame after arrival.
+- Portal loading screen, opt-in (`[Teleport]`): `PrefetchTerrainEnabled` queues the destination's terrain (16 nearest zones) on the game's own builder thread during the 2 s fade; `ZoneBurstEnabled` (`ZoneBurstMilliseconds` 16) creates several destination zones per frame after the move instead of one per 0.1 s, with the same native call as the initial-join acceleration. On 2026-09-26 the zones around a destination took 2.8 s to appear and were what held an early arrival. Gauges `teleport_prefetch_*`, `teleport_zone_burst_*`.
+- Add opt-in paint-only terrain reload (`[Terrain] PaintOnlyReloadEnabled`): when another player's terrain edit arrives and no height changed (hoe path, cultivator), refresh only the paint, as the editing player does, instead of rebuilding the collision and render meshes (5.3 ms mean on the second player's client on 2026-09-25). Height edits keep the full rebuild. Gauges `terrain_reload_*`, docs/terrain-paint-only-reload.md.
+- Object creation budget: no longer applies while the game counts a loading screen, i.e. no local player yet or a teleport in progress (`[ObjectLoading] UnbudgetedInLoadingScreen`, default on). It capped creation at 4 ms per frame behind a screen that hides those frames, where vanilla allows 100 objects per frame. Gauge `object_budget_loading_screen_batches_total`.
+
 ### 0.4.17
 
 - Idle pre-generation: fix its frame budget. On 2026-09-24 it generated 1 zone in 83 idle minutes.

@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.17";
+        public const string PluginVersion = "0.4.18";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -60,6 +60,8 @@ namespace BetterPerformance
             slowLoopMs = Config.Bind("Diagnostics", "SlowLoopMilliseconds", 100f, new ConfigDescription("Loop-gap alert threshold. Gaps include frame pacing and scheduling; they are not method execution time.", new AcceptableValueRange<float>(10f, 10000f)));
             slowWorkerMs = Config.Bind("Diagnostics", "SlowSaveWorkerMilliseconds", 250f, new ConfigDescription("Save-worker alert threshold. Worker elapsed time is not a main-thread pause.", new AcceptableValueRange<float>(10f, 60000f)));
             ObjectCreationBudget.Install(Config, Logger);
+            // Before InitialLoadingOptimization, which reads [Teleport] ZoneBurstEnabled from it.
+            TeleportZonePreparation.Install(Config, Logger);
             InitialLoadingOptimization.Install(Config, Logger);
             if (Config.Bind("NetworkMemory", "LocalPackageCopyEnabled", false,
                 "Avoid temporary source arrays at the verified local SendZDOs package copy. Preserve native length/payload and ownership; requires restart.").Value)
@@ -106,6 +108,10 @@ namespace BetterPerformance
             IdleZonePregeneration.Install(Config, Logger);
             // 0.4.16 opt-in: the native hourly unused-asset unload moves out of play.
             AssetUnloadDeferral.Install(Config, Logger);
+            // 0.4.18 opt-in: a portal ends once everything near the player is loaded, before the 8 s floor.
+            FastTeleportArrival.Install(Config, Logger);
+            // 0.4.18 opt-in: another player's paint-only terrain edit refreshes the paint only, as on the editor.
+            TerrainPaintOnlyReload.Install(Config, Logger);
             new Terminal.ConsoleCommand("bp_budget", "Experimental object budget: on | off | status (installed at startup; local process only)",
                 (Terminal.ConsoleEvent)(args =>
                 {
@@ -143,6 +149,12 @@ namespace BetterPerformance
             {
                 LoadingDetailsTelemetry.Install(Logger);
                 LoadingDetailsTelemetry.Enabled = LoadingDetailsTelemetry.Installed;
+            }
+            if (Config.Bind("Diagnostics", "TeleportLoadingEnabled", true,
+                "Time each local teleport by phase (move, destination zone, objects ready, floor, end) and the wait after readiness. Observes only.").Value)
+            {
+                TeleportLoadingTelemetry.Install(Logger);
+                TeleportLoadingTelemetry.Enabled = TeleportLoadingTelemetry.Installed;
             }
             LootQueueTelemetry.ConfigureAndInstall(Config, Logger);
             LootVisibilityTelemetry.Install(Config, Logger);
@@ -367,7 +379,7 @@ namespace BetterPerformance
                 new TextValue("mode", ObjectCreationBudget.Installed || InitialLoadingOptimization.Installed || FastMapSerialization.Installed || MapCompressionCache.Installed || PackageCopyOptimization.Installed
                     || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || BiomePointCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || SectorInvalidationFix.Enabled || NetworkFlow.Enabled || NetworkCompression.Enabled
                     || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled || DungeonSpawnSlicing.Enabled || MapPrecompression.Installed
-                    || HeightmapRebuildBudget.Enabled || IdleZonePregeneration.Installed || AssetUnloadDeferral.Installed
+                    || HeightmapRebuildBudget.Enabled || IdleZonePregeneration.Installed || AssetUnloadDeferral.Installed || FastTeleportArrival.Installed || TeleportZonePreparation.PrefetchInstalled || TerrainPaintOnlyReload.Installed
                     ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
                 new TextValue("map_serialization_status", FastMapSerialization.Status),
                 new TextValue("queue_semantics", "socket API result; active mods may adjust it or make it negative"),
@@ -417,6 +429,10 @@ namespace BetterPerformance
             HeightmapRebuildBudget.Reset();
             IdleZonePregeneration.Reset();
             AssetUnloadDeferral.Reset();
+            TeleportLoadingTelemetry.Reset();
+            FastTeleportArrival.Reset();
+            TeleportZonePreparation.Reset();
+            TerrainPaintOnlyReload.Reset();
             CharacterSaveDiskTelemetry.Reset();
             RenderTelemetry.Reset();
             EngineTelemetry.Reset();
@@ -471,6 +487,10 @@ namespace BetterPerformance
             ZoneGenerationTelemetry.Sample(gauges, labels);
             IdleZonePregeneration.Sample(gauges, labels);
             AssetUnloadDeferral.Sample(gauges, labels);
+            TeleportLoadingTelemetry.Sample(gauges, labels);
+            FastTeleportArrival.Sample(gauges, labels);
+            TeleportZonePreparation.Sample(gauges, labels);
+            TerrainPaintOnlyReload.Sample(gauges, labels);
             HeightmapRebuildBudget.Sample(gauges, labels);
             CharacterSaveDiskTelemetry.Sample(gauges, labels);
             AttributionTelemetry.Sample(gauges, labels);
@@ -584,7 +604,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { ZoneGenerationTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { IdleZonePregeneration.Sample(gauges, labels); AssetUnloadDeferral.Sample(gauges, labels); }
+            try { IdleZonePregeneration.Sample(gauges, labels); AssetUnloadDeferral.Sample(gauges, labels); TeleportLoadingTelemetry.Sample(gauges, labels); FastTeleportArrival.Sample(gauges, labels); TeleportZonePreparation.Sample(gauges, labels); TerrainPaintOnlyReload.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { HeightmapRebuildBudget.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -650,6 +670,10 @@ namespace BetterPerformance
             HeightmapRebuildBudget.Uninstall();
             IdleZonePregeneration.Uninstall();
             AssetUnloadDeferral.Uninstall();
+            TeleportLoadingTelemetry.Uninstall();
+            FastTeleportArrival.Uninstall();
+            TeleportZonePreparation.Uninstall();
+            TerrainPaintOnlyReload.Uninstall();
             CharacterSaveDiskTelemetry.Uninstall();
             AttributionTelemetry.Uninstall();
             LoadingTelemetry.Uninstall();

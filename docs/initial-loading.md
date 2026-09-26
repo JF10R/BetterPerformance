@@ -3,7 +3,9 @@
 Added in 0.4.3. The module gives native local-zone preparation more service during
 the initial join to a remote server. It is independent of diagnostics and the
 object-creation budget. It does not apply to a dedicated server, a listen-server
-host, ordinary gameplay, death respawns or teleports after the first spawn.
+host, ordinary gameplay or death respawns. Since 0.4.18 the same wrapper also serves a
+distant teleport's loading screen when `[Teleport] ZoneBurstEnabled` is set (see
+[teleport loading](teleport-loading.md)); either switch installs it.
 
 ### One configuration switch
 
