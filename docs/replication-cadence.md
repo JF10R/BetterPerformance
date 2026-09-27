@@ -59,3 +59,11 @@ all come from one postfix registered to run before any deferral, so they describ
 vanilla selection either way. Byte-budget truncations are counted without a transpiler, as
 the shortfall between the selected list and the `m_zdosSent` delta across one `SendZDOs`
 call; that field is assigned exactly once, in the loop whose only early exit is the budget.
+
+## Per-peer pass interval (0.4.19)
+
+Always-on, beside the histograms above: the time between two sync-list passes for the same peer,
+`replication_peer_interval_b0..b8` (bounds in `replication_peer_interval_bounds`: 34, 50, 67, 84, 100, 150,
+200, 500 ms), `replication_peer_interval_samples` and `replication_peer_interval_max_ms`. The native 50 ms
+cooldown is quantized by the frame rate, so a dedicated server at 30 fps serves each peer every 67-100 ms.
+Read with `frame_busy_over_60hz` (docs/engine-telemetry.md) before raising the server's tick.

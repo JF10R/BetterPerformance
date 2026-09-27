@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.18";
+        public const string PluginVersion = "0.4.19";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -74,6 +74,7 @@ namespace BetterPerformance
             RenderTelemetry.Enabled = Config.Bind("Diagnostics", "SparseRenderTimingEnabled", false,
                 "Optional sparse completed-frame CPU/GPU samples when the shipped engine exposes frame timings; never frame percentiles.").Value;
             EngineTelemetry.Install(Config, Logger);
+            FramePacingTelemetry.Install(Config, Logger);
             if (Config.Bind("MapSaving", "ExactCompressionCacheEnabled", false,
                 "Reuse compressed output only when the complete native serialized map input is byte-identical. Retains a bounded cache (up to 24 MiB) and requires restart.").Value)
             {
@@ -112,6 +113,8 @@ namespace BetterPerformance
             FastTeleportArrival.Install(Config, Logger);
             // 0.4.18 opt-in: another player's paint-only terrain edit refreshes the paint only, as on the editor.
             TerrainPaintOnlyReload.Install(Config, Logger);
+            // 0.4.19: jump delays always measured; the early send (client) and relay (server) stay opt-in.
+            PositionJumpSync.Install(Config, Logger);
             new Terminal.ConsoleCommand("bp_budget", "Experimental object budget: on | off | status (installed at startup; local process only)",
                 (Terminal.ConsoleEvent)(args =>
                 {
@@ -279,6 +282,8 @@ namespace BetterPerformance
             try
             {
                 EngineTelemetry.NoteFrame();
+                TeleportLoadingTelemetry.NoteFrame();
+                PositionJumpSync.Pump();
                 CaptureRelay.Pump();
                 if (retiring != null && retiring.Writer.Finish(0))
                 {
@@ -380,6 +385,7 @@ namespace BetterPerformance
                     || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || BiomePointCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || SectorInvalidationFix.Enabled || NetworkFlow.Enabled || NetworkCompression.Enabled
                     || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled || DungeonSpawnSlicing.Enabled || MapPrecompression.Installed
                     || HeightmapRebuildBudget.Enabled || IdleZonePregeneration.Installed || AssetUnloadDeferral.Installed || FastTeleportArrival.Installed || TeleportZonePreparation.PrefetchInstalled || TerrainPaintOnlyReload.Installed
+                    || PositionJumpSync.SendEnabled || PositionJumpSync.RelayEnabled
                     ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
                 new TextValue("map_serialization_status", FastMapSerialization.Status),
                 new TextValue("queue_semantics", "socket API result; active mods may adjust it or make it negative"),
@@ -433,9 +439,11 @@ namespace BetterPerformance
             FastTeleportArrival.Reset();
             TeleportZonePreparation.Reset();
             TerrainPaintOnlyReload.Reset();
+            PositionJumpSync.Reset();
             CharacterSaveDiskTelemetry.Reset();
             RenderTelemetry.Reset();
             EngineTelemetry.Reset();
+            FramePacingTelemetry.Reset();
             current = new CaptureSession(directory,
                 Role(), duration.Value, interval.Value, capacity.Value, fileLimit.Value * 1024L * 1024L, metadata,
                 slowOperations.Value, slowMethodMs.Value, slowLoopMs.Value, slowWorkerMs.Value, startGauges, CaptureRelay.Tee);
@@ -463,6 +471,7 @@ namespace BetterPerformance
             ResourceTelemetry.Sample(gauges, labels);
             RenderTelemetry.Sample(gauges, labels);
             EngineTelemetry.Sample(gauges, labels);
+            FramePacingTelemetry.Sample(gauges, labels);
             MapCompressionCache.Sample(gauges, labels);
             MapPrecompression.Sample(gauges, labels);
             PackageCopyOptimization.Sample(gauges, labels);
@@ -491,6 +500,7 @@ namespace BetterPerformance
             FastTeleportArrival.Sample(gauges, labels);
             TeleportZonePreparation.Sample(gauges, labels);
             TerrainPaintOnlyReload.Sample(gauges, labels);
+            PositionJumpSync.Sample(gauges, labels);
             HeightmapRebuildBudget.Sample(gauges, labels);
             CharacterSaveDiskTelemetry.Sample(gauges, labels);
             AttributionTelemetry.Sample(gauges, labels);
@@ -604,7 +614,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { ZoneGenerationTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { IdleZonePregeneration.Sample(gauges, labels); AssetUnloadDeferral.Sample(gauges, labels); TeleportLoadingTelemetry.Sample(gauges, labels); FastTeleportArrival.Sample(gauges, labels); TeleportZonePreparation.Sample(gauges, labels); TerrainPaintOnlyReload.Sample(gauges, labels); }
+            try { IdleZonePregeneration.Sample(gauges, labels); AssetUnloadDeferral.Sample(gauges, labels); TeleportLoadingTelemetry.Sample(gauges, labels); FastTeleportArrival.Sample(gauges, labels); TeleportZonePreparation.Sample(gauges, labels); TerrainPaintOnlyReload.Sample(gauges, labels); PositionJumpSync.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { HeightmapRebuildBudget.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -623,7 +633,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { MapCompressionCache.Sample(gauges, labels); MapPrecompression.Sample(gauges, labels); PackageCopyOptimization.Sample(gauges, labels); CloudWriteOptimization.Sample(gauges, labels); MinimapTextureCache.Sample(gauges, labels); BiomePointCache.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { EngineTelemetry.Sample(gauges, labels); }
+            try { EngineTelemetry.Sample(gauges, labels); FramePacingTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             session.Export(gauges, labels, final: true, attributions: finalAttributions);
             LootQueueTelemetry.Reset();
@@ -674,12 +684,14 @@ namespace BetterPerformance
             FastTeleportArrival.Uninstall();
             TeleportZonePreparation.Uninstall();
             TerrainPaintOnlyReload.Uninstall();
+            PositionJumpSync.Uninstall();
             CharacterSaveDiskTelemetry.Uninstall();
             AttributionTelemetry.Uninstall();
             LoadingTelemetry.Uninstall();
             LoadingDetailsTelemetry.Uninstall();
             InitialLoadingOptimization.Uninstall();
             EngineTelemetry.Uninstall();
+            FramePacingTelemetry.Uninstall();
             instance = null;
             process?.Dispose();
         }

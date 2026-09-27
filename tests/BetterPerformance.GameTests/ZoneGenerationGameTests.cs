@@ -61,9 +61,9 @@ internal static class ZoneGenerationGameTests
         MethodInfo phase = telemetry.GetMethod("RecordPhase", Static)!;
         object Begin(string mode)
         {
-            object?[] call = { Enum.Parse(spawnMode, mode), null };
+            object?[] call = { Activator.CreateInstance(arguments[0].ParameterType), Enum.Parse(spawnMode, mode), null };
             before.Invoke(null, call);
-            return call[1]!;
+            return call[2]!;
         }
         void Phase(string name, double ms) => phase.Invoke(null, new[] { Enum.Parse(metric, name), (object)ms, session });
         void End(object state, bool succeeded = true, Exception? exception = null) =>

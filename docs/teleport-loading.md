@@ -27,7 +27,22 @@ One record per teleport, exported in the interval where it ends (`TeleportTimeli
 | `teleport_budget_yields`, `teleport_instances_delta` | object-budget yields, scene objects gained |
 | `teleport_distance_m` | straight-line distance |
 
-Also `teleport_started`, `teleport_completed`, `teleport_distant_completed`, `teleport_replaced_incomplete`, labels `teleport_kind`, `teleport_end` (`floor_found` / `no_floor`). A distant teleport also prints one `Teleport loading:` log line. A milestone never reached is left out, not exported as zero.
+Also `teleport_started`, `teleport_completed`, `teleport_distant_completed`, `teleport_replaced_incomplete`, labels `teleport_kind`, `teleport_end` (`floor_found` / `no_floor`). A distant teleport also prints one `Teleport loading:` log line. A milestone never reached is left out, not exported as zero. Since 0.4.19, readiness first reached in the very call that ends the teleport is marked at the end; before, it read "never" (7 of 52 portals on 2026-09-26).
+
+### After arrival (0.4.19)
+
+For 10 s after a distant arrival (`PostArrivalWindow`), exported once the window closes, with a `Teleport after arrival:` log line:
+
+| Gauge | Meaning |
+| --- | --- |
+| `teleport_after_frames`, `teleport_after_slow_frames`, `teleport_after_very_slow_frames` | frames, over 50 ms, over 100 ms |
+| `teleport_after_frame_max_ms`, `teleport_after_slow_ms_sum` | slowest frame, time in slow frames |
+| `teleport_after_slow_gpu`, `teleport_after_slow_main_thread` | slow frames whose previous-frame GPU or main-thread counter was over 50 ms (approximate: the engine counters lag one frame) |
+| `teleport_after_near_pending`, `teleport_after_distant_pending` | objects of the scene's near and distant lists not yet created at arrival (`ZNetScene.CreateObjects` arguments) |
+| `teleport_after_near_drained_ms` | when the near list had nothing left to create; absent if not within 10 s |
+| `teleport_after_instances_delta` | scene objects gained during the window |
+
+Label `teleport_after_end`: `window_closed`, or `cut_by_teleport` when another teleport started first. This window decides whether holding the screen until the near objects are created would be worth its cost.
 
 ## What changes
 

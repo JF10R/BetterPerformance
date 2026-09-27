@@ -24,6 +24,7 @@ internal static class Program
             BudgetTelemetryTests.CreationCostsAndBatches, BudgetTelemetryTests.CensoringAndReset,
             AiCadenceTests.Run, MapBitWriterTests.Run, ThreadCpuWindowTests.Run, ExactByteCacheTests.Run,
             PrecompressionPolicyTests.Run, PregenerationFrontierTests.Run, AssetUnloadPolicyTests.Run, TeleportTimelineTests.Run, TeleportArrivalPolicyTests.Run, TerrainHeightSnapshotTests.Run,
+            PostArrivalWindowTests.Run, FixedCatchupTests.Run, PositionJumpPolicyTests.Run,
             MinimapCacheStoreTests.Run, BiomeCacheStoreTests.Run, CacheKeyMaterialTests.Run,
             PackageCopyTests.Run, ActionTrackerTests.Run, LoadingTimelineTests.Run,
             FrameStepWindowTests.Run, KeyedAggregatorTests.Run, AttributionTargetSplitTests.Run,

@@ -24,6 +24,12 @@ namespace BetterPerformance
         private static readonly Harmony Patches = new Harmony(Plugin.PluginId + ".ReplicationTelemetry");
         private static readonly KeyedBucketHistograms Intervals = new KeyedBucketHistograms(PrefabCapacity, IntervalBounds);
         private static readonly BucketHistogram Distances = new BucketHistogram(DistanceBounds);
+        // Time between two sync passes for the same peer: the 50 ms native cooldown quantized by the
+        // frame rate (a server at 30 Hz serves each peer every ~67-100 ms). Decides the tick-rate question.
+        private static readonly double[] PeerIntervalBounds = { 0.034, 0.05, 0.067, 0.084, 0.1, 0.15, 0.2, 0.5 };
+        private static readonly BucketHistogram PeerIntervals = new BucketHistogram(PeerIntervalBounds);
+        private static readonly Dictionary<object, float> LastPass = new Dictionary<object, float>();
+        private static double peerIntervalMax;
         private static readonly Dictionary<int, string> PrefabNames = new Dictionary<int, string>(PrefabCapacity);
         private static ConfigEntry<bool> configured = null!;
         private static AccessTools.FieldRef<ZDOMan, int>? zdosSent;
@@ -112,6 +118,13 @@ namespace BetterPerformance
                 Vector3 reference = hasReference ? peer!.GetRefPos() : Vector3.zero;
                 float now = Time.time;
                 passes++;
+                if (LastPass.TryGetValue(__0, out float previous) && now > previous && now - previous < 5f)
+                {
+                    PeerIntervals.Add(now - previous);
+                    if ((now - previous) * 1000.0 > peerIntervalMax) peerIntervalMax = (now - previous) * 1000.0;
+                }
+                if (LastPass.Count > 32 && !LastPass.ContainsKey(__0)) LastPass.Clear();
+                LastPass[__0] = now;
                 foreach (ZDO zdo in __1)
                 {
                     if (ReferenceEquals(zdo, null)) continue;
@@ -182,6 +195,11 @@ namespace BetterPerformance
             for (int bucket = 0; bucket < Distances.BucketCount; bucket++)
                 gauges.Add(new NumberValue("replication_send_distance_b" + bucket.ToString(CultureInfo.InvariantCulture), Distances[bucket], "sends"));
             gauges.Add(new NumberValue("replication_send_distance_samples", Distances.Total, "sends"));
+            labels.Add(new TextValue("replication_peer_interval_bounds", BucketHistogram.Describe(PeerIntervalBounds)));
+            for (int bucket = 0; bucket < PeerIntervals.BucketCount; bucket++)
+                gauges.Add(new NumberValue("replication_peer_interval_b" + bucket.ToString(CultureInfo.InvariantCulture), PeerIntervals[bucket], "passes"));
+            gauges.Add(new NumberValue("replication_peer_interval_samples", PeerIntervals.Total, "passes"));
+            gauges.Add(new NumberValue("replication_peer_interval_max_ms", Math.Round(peerIntervalMax, 1), "ms"));
             var exported = new StringBuilder();
             foreach (KeyValuePair<int, BucketHistogram> row in Intervals.TopKeys(ExportedPrefabs))
             {
@@ -226,6 +244,8 @@ namespace BetterPerformance
         {
             Intervals.Reset();
             Distances.Reset();
+            PeerIntervals.Reset();
+            peerIntervalMax = 0;
             passes = entries = forcedEntries = prioritizedEntries = firstSends = 0;
             sends = truncatedSends = truncatedEntries = boundedSkips = 0;
             probeFailures = otherThreadSkips = 0;
@@ -236,6 +256,7 @@ namespace BetterPerformance
         {
             Enabled = false;
             Reset();
+            LastPass.Clear();
             PrefabNames.Clear();
             zdosSent = null;
             Installed = false;

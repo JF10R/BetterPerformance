@@ -98,3 +98,12 @@ The module installs only when the game's `ZNet.IsDedicated()` compiles to the co
 `_candidates_remaining`, `_activity_zones`, `_run_total` as levels; labels `idle_pregen_status`
 and `idle_pregen_store`. Idle calls also appear in `zone_generation_ghost_*`, in intervals
 with `peer_count` 0.
+
+## Who triggers live generation (0.4.19)
+
+`ZoneGenerationTelemetry` attributes each Full-mode spawn on the server (a new zone) to the peer whose
+reported position is nearest the zone centre, tagged by session id, never by name: label
+`zone_generation_full_by_peer` (`peer_ab12:5,...`), and for the slowest one `zone_generation_full_worst_zone`
+(`x,y`), `zone_generation_full_worst_peer`, `zone_generation_full_worst_ms` and
+`zone_generation_full_worst_peer_distance_m`. On 2026-09-26 these spikes reached 120-210 ms while the players
+explored new land and idle pre-generation was paused because peers were connected.

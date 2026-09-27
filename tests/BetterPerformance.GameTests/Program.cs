@@ -313,6 +313,7 @@ Module("IdlePregeneration", () => IdlePregenerationGameTests.Run(game, plugin));
 Module("AssetUnload", () => AssetUnloadGameTests.Run(game, plugin));
 Module("Teleport", () => TeleportGameTests.Run(game, plugin));
 Module("TerrainPaintOnly", () => TerrainPaintOnlyGameTests.Run(game, plugin));
+Module("PositionJump", () => PositionJumpGameTests.Run(game, plugin));
 Module("MapPrecompression", () => MapPrecompressionGameTests.Run(game, plugin));
 if (contractFailures.Count > 0)
 {

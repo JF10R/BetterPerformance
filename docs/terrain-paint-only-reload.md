@@ -14,7 +14,7 @@ A prefix on `CheckLoad` copies the three height arrays (`m_modifiedHeight`, `m_l
 
 Why the result is identical: `Regenerate` always recomputes the heights and refreshes the paint texture; only the two mesh rebuilds depend on `Full`, and they read heights and biome colours, never paint. Equal height arrays give equal meshes, which is also what the editing player shows. Any difference, a missing array or any other `Poke` call keeps the Full rebuild. Nothing is sent or saved differently.
 
-Gauges: `terrain_reload_paint_only`, `terrain_reload_full`, `terrain_reload_compare_ms_max`, `terrain_paint_only_failures`; label `terrain_paint_only_status`.
+Gauges: `terrain_reload_paint_only`, `terrain_reload_full`, `terrain_reload_compare_ms_max`, `terrain_paint_only_failures`; label `terrain_paint_only_status`. Since 0.4.19, `terrain_reload_full_first_load` counts the full reloads that were a compiler's first data (a zone coming into view, necessary); `terrain_reload_full` minus it is the real height edits. On 2026-09-26 only 10 % of reloads were paint-only, and the split was unknown.
 
 ## Limits
 

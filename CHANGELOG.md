@@ -1,5 +1,15 @@
 # Changelog
 
+### 0.4.19
+
+- Add position jump sync (`[Teleport] SendPositionOnJumpEnabled` client, `RelayPlayerListOnJumpEnabled` server, both opt-in; `PositionJumpMeters` 64). After a portal or respawn the client sends its position at once instead of within 2 s, and the server relays the player list at once. The server chooses what to stream around that position, and the map draws players from that list. On 2026-09-26, other players' map icons lagged 0–4 s after fast portals. Same native messages and values. The delays are always measured (`position_jump_*`, `player_list_*`), docs/position-jump-sync.md.
+- Teleport loading: add the 10 s after each distant arrival: slow frames, GPU or main thread, objects still pending creation at arrival and when the near ones drained (`teleport_after_*`, `Teleport after arrival:` log line). On 2026-09-26 the second player had about 5 more frames over 50 ms per portal in the 20 s after arrival than before fast arrival; 4 s capture intervals could not say why.
+- Teleport loading: readiness reached in the very call that ends a teleport is now marked, instead of logging "area ready at never" (7 of 52 portals on 2026-09-26).
+- Paint-only reload: split `terrain_reload_full` with `terrain_reload_full_first_load` (a zone coming into view) from real height edits.
+- Add frame pacing telemetry (`[Diagnostics] FramePacingEnabled`, default on, read-only): stopwatch stamps in the engine loop around the frame-rate wait and each fixed step. Per-frame work against the 60/120/144 Hz budgets (`frame_busy_*`), the fixed-step catch-up cost and what a 0.1 s `maximumDeltaTime` would skip (`fixed_catchup_*`, `fixed_phase_ms_*`), and label `graphics_in_background` (false on the 30 fps isolated server: the limit is the requested preset). Two questions: a faster server tick (the dedicated server runs at 30 fps), and a lower catch-up cap (41 % of the second player's intervals replayed 3 or more fixed steps in one frame). Profiler markers could not answer them.
+- Replication telemetry: time between two sync passes for the same peer (`replication_peer_interval_*`).
+- Zone generation telemetry: attribute each new zone on the server to the nearest peer (`zone_generation_full_by_peer`, `zone_generation_full_worst_*`). Server spikes of 120–210 ms on 2026-09-26 came from live generation while exploring.
+
 ### 0.4.18
 
 - Hourly asset unload deferral: a client now also offers the game's own unload check during a distant teleport (`[Memory] UnloadDuringTeleport`, default on). It runs once per teleport, after the move and once the destination area is ready, still behind the loading screen, and only if the last unload is over 20 min old, as vanilla does at sleep and respawn.

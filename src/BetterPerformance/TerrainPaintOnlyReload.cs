@@ -26,9 +26,14 @@ namespace BetterPerformance
         private static AccessTools.FieldRef<TerrainComp, MonoBehaviour>? heightmapOf;
         // One reload at a time: CheckLoad is main-thread and not re-entrant.
         private static TerrainComp? pending;
+        private static bool pendingFirst;
+        // Compilers that already applied a load: a later full reload is a real height edit.
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TerrainComp, object> Loaded =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<TerrainComp, object>();
+        private static readonly object Seen = new object();
         private static bool[] savedModified = Array.Empty<bool>();
         private static float[] savedLevel = Array.Empty<float>(), savedSmooth = Array.Empty<float>();
-        private static long paintOnlyReloads, fullReloads, failures;
+        private static long paintOnlyReloads, fullReloads, fullFirstLoads, failures;
         private static double compareMsMax;
 
         internal static bool Installed { get; private set; }
@@ -84,6 +89,7 @@ namespace BetterPerformance
                 Copy(level, ref savedLevel);
                 Copy(smooth, ref savedSmooth);
                 pending = __instance;
+                pendingFirst = !Loaded.TryGetValue(__instance, out _);
             }
             catch { failures++; pending = null; }
         }
@@ -99,12 +105,13 @@ namespace BetterPerformance
             try
             {
                 if (!ReferenceEquals(heightmapOf!(comp), __instance)) return;
+                if (pendingFirst) Loaded.Add(comp, Seen);
                 long started = Stopwatch.GetTimestamp();
                 bool same = TerrainHeightSnapshot.Equal(savedModified, savedLevel, savedSmooth, modifiedHeight!(comp), levelDelta!(comp), smoothDelta!(comp));
                 double ms = (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
                 if (ms > compareMsMax) compareMsMax = ms;
                 if (same) { paintOnly = true; paintOnlyReloads++; }
-                else fullReloads++;
+                else { fullReloads++; if (pendingFirst) fullFirstLoads++; }
             }
             catch { failures++; }
         }
@@ -120,7 +127,9 @@ namespace BetterPerformance
             labels.Add(new TextValue("terrain_paint_only_status", Status));
             if (!Installed) return;
             gauges.Add(new NumberValue("terrain_reload_paint_only", Take(ref paintOnlyReloads), "reloads"));
+            // full = first_load (a compiler's first data, e.g. a zone coming into view) + a real height edit.
             gauges.Add(new NumberValue("terrain_reload_full", Take(ref fullReloads), "reloads"));
+            gauges.Add(new NumberValue("terrain_reload_full_first_load", Take(ref fullFirstLoads), "reloads"));
             gauges.Add(new NumberValue("terrain_reload_compare_ms_max", Math.Round(compareMsMax, 3), "ms"));
             gauges.Add(new NumberValue("terrain_paint_only_failures", Take(ref failures), "calls"));
             compareMsMax = 0;
@@ -128,7 +137,7 @@ namespace BetterPerformance
 
         internal static void Reset()
         {
-            paintOnlyReloads = fullReloads = failures = 0;
+            paintOnlyReloads = fullReloads = fullFirstLoads = failures = 0;
             compareMsMax = 0;
         }
 

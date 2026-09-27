@@ -5,6 +5,7 @@ using System.Threading;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using BetterPerformance.Core;
+using HarmonyLib;
 using Unity.Profiling;
 using Unity.Profiling.LowLevel.Unsafe;
 using UnityEngine;
@@ -92,6 +93,9 @@ namespace BetterPerformance
         };
 
         private static readonly FrameStepWindow Window = new FrameStepWindow();
+        // Counters read per frame by the post-arrival window, resolved once so that path does no name lookup.
+        private static readonly Probe MainThread = Find("CPU Main Thread Frame Time")!, Gpu = Find("GPU Frame Time")!;
+        private static AccessTools.FieldRef<GraphicsSettingsManager, bool>? inBackground;
         private static readonly List<ProfilerRecorderSample> Scratch = new List<ProfilerRecorderSample>(MarkerCapacity);
         private static ProfilerRecorder[] recorders = Array.Empty<ProfilerRecorder>();
         private static int recorderCount;
@@ -209,6 +213,24 @@ namespace BetterPerformance
             if (enabled && Thread.CurrentThread.ManagedThreadId == installThread) Window.NoteFrame();
         }
 
+        // Last completed frame's main-thread and GPU frame time (ms); NaN when unavailable. Main thread only.
+        internal static void LastFrame(out double mainMs, out double gpuMs)
+        {
+            mainMs = gpuMs = double.NaN;
+            if (!enabled || disposed || Thread.CurrentThread.ManagedThreadId != installThread) return;
+            mainMs = Last(MainThread);
+            gpuMs = Last(Gpu);
+        }
+
+        private static bool Available(Probe probe) => probe != null && probe.Index >= 0;
+
+        private static double Last(Probe probe)
+        {
+            if (!Available(probe)) return double.NaN;
+            double value = recorders[probe.Index].LastValue * probe.Scale;
+            return value < 0 || double.IsInfinity(value) ? double.NaN : value;
+        }
+
         // Discards engine samples accumulated before a capture so the first interval is not inflated.
         internal static void Reset()
         {
@@ -301,6 +323,15 @@ namespace BetterPerformance
 
         private static void SampleEngineSettings(List<NumberValue> gauges, List<TextValue> labels)
         {
+            // Why the frame rate is what it is: the fps limit comes from the Background graphics mode when the
+            // platform reports the process in background (GraphicsSettingsManager.m_isInBackground).
+            try
+            {
+                inBackground ??= AccessTools.FieldRefAccess<GraphicsSettingsManager, bool>("m_isInBackground");
+                GraphicsSettingsManager manager = GraphicsSettingsManager.Instance;
+                labels.Add(new TextValue("graphics_in_background", manager == null ? "no_manager" : inBackground(manager) ? "true" : "false"));
+            }
+            catch { labels.Add(new TextValue("graphics_in_background", "unavailable")); }
             try
             {
                 gauges.Add(new NumberValue("fixed_delta_time", Time.fixedDeltaTime * 1000.0, "ms"));

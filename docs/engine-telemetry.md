@@ -41,6 +41,26 @@ for presentation. **CPU-bound** is the opposite, high main-thread or render-thre
 waits. A large `engine_wait_for_target_fps_sum` is neither: it is the frame cap or VSync holding the loop, and it
 should be read beside `target_frame_rate` and `vsync_count`.
 
+**Frame pacing** (0.4.19, `FramePacingTelemetry`, `[Diagnostics] FramePacingEnabled`, default on). Stopwatch stamps
+inserted in the engine loop, read-only: around `TimeUpdate.WaitForLastPresentationAndUpdateTime` (where Unity sleeps
+to the target frame rate and waits for the previous present) and at the head and tail of each `FixedUpdate` pass.
+Profiler markers could not do it: `WaitForTargetFPS` misses that sleep, and the fixed-phase markers are absent from
+the shipped player.
+
+- Work per frame (frame time minus that wait): `frame_busy_frames`, `frame_busy_ms_sum`, `frame_busy_ms_max`,
+  `frame_wait_ms_sum`, and `frame_busy_over_60hz` / `_120hz` / `_144hz`, the frames whose work alone would not fit
+  that tick. On the dedicated server this is what a faster tick would have to fit.
+- Catch-up cost: each frame's fixed steps and their measured time, `fixed_catchup_paired_frames`, `_paired_steps`,
+  `fixed_catchup_frames` (3+ steps), `_extra_steps`, `fixed_phase_ms_sum` / `_max`, `fixed_catchup_ms_sum`, and what
+  a `maximumDeltaTime` of 0.1 s would have skipped: `fixed_catchup_steps_beyond_100ms_cap`,
+  `fixed_catchup_projected_saved_ms` (proportional share of that frame's fixed time). Nothing is capped.
+- Label `frame_pacing_status`; `graphics_in_background` (from `EngineTelemetry`) says whether the fps limit comes from
+  the game's Background graphics mode. It read `false` on the isolated dedicated server at 30 fps, so that limit comes
+  from the requested preset itself.
+- A frame that never sleeps (under its target rate) shows its whole time as work; the isolated run on a fresh world
+  (server 22 fps, client 30 fps, both processes on one machine) showed nothing else, so the idle split is only
+  observable in play.
+
 `engine_gc_collect_max` is the actual collection pause, which loop-gap and frame-time numbers only contain
 indirectly. A **fixed-step storm** after a stall shows up as `fixed_steps_max_per_frame` well above one with
 `frames_with_multiple_fixed_steps` rising: the engine is replaying catch-up simulation steps, bounded by

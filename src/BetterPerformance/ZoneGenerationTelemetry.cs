@@ -39,7 +39,16 @@ namespace BetterPerformance
             internal int Generation;
             internal long Started;
             internal bool Entered;
+            internal Vector2s Zone;
         }
+
+        // Full-mode spawns (new zones on the server) by nearest peer, and the slowest one with its zone.
+        private static readonly Dictionary<long, int> FullByPeer = new Dictionary<long, int>();
+        private static double worstFullMs, worstPeerDistance;
+        private static Vector2s worstZone;
+        private static long worstPeer;
+        // Set only once the patch installs in game, so the offline harness never loads ZNet.
+        private static Action<Vector2s, double>? attributeFull;
 
         internal static void Install(ConfigFile config, ManualLogSource logger)
         {
@@ -59,6 +68,7 @@ namespace BetterPerformance
                     finalizer: new HarmonyMethod(typeof(ZoneGenerationTelemetry), nameof(AfterSpawn)) { priority = Priority.Last });
                 Installed = true;
                 Status = "installed";
+                attributeFull = AttributeFull;
             }
             catch (Exception exception)
             {
@@ -69,7 +79,7 @@ namespace BetterPerformance
             }
         }
 
-        private static void BeforeSpawn(ZoneSystem.SpawnMode __1, out ScopeState __state)
+        private static void BeforeSpawn(Vector2s __0, ZoneSystem.SpawnMode __1, out ScopeState __state)
         {
             __state = default;
             if (!Installed) return;
@@ -80,7 +90,7 @@ namespace BetterPerformance
             try
             {
                 long started = Stopwatch.GetTimestamp();
-                __state = new ScopeState { Previous = current, Generation = generation, Started = started, Entered = true };
+                __state = new ScopeState { Previous = current, Generation = generation, Started = started, Entered = true, Zone = __0 };
                 current = new Scope { Session = session, Generation = generation, Started = started,
                     Call = new ZoneGenerationCall { Mode = Mode(__1) } };
             }
@@ -118,6 +128,7 @@ namespace BetterPerformance
                 completed.Call.Succeeded = __result && __exception == null;
                 completed.Call.Failed = __exception != null;
                 if (!Window.Record(completed.Call)) Interlocked.Increment(ref probeFailures);
+                if (completed.Call.Mode == ZoneGenerationMode.Full) attributeFull?.Invoke(__state.Zone, completed.Call.ElapsedMs);
                 // Preserve inclusive phase samples if a mod nests another SpawnZone.
                 // An enclosing phase can overlap a nested phase of the same family;
                 // these are sums of inclusive samples, never an exclusive partition.
@@ -131,6 +142,32 @@ namespace BetterPerformance
             }
             catch { Interlocked.Increment(ref probeFailures); }
         }
+
+        // The server spawns zones around every peer's reported position: the nearest peer is the one
+        // whose travel asked for the zone. Peers are tagged by session id, never by name.
+        private static void AttributeFull(Vector2s zone, double elapsedMs)
+        {
+            ZNet net = ZNet.instance;
+            if (net == null || !net.IsServer()) return;
+            Vector3 center = ZoneSystem.GetZonePos(zone);
+            long nearest = 0;
+            double best = double.MaxValue;
+            foreach (ZNetPeer peer in net.GetPeers())
+            {
+                if (peer == null) continue;
+                double distance = Vector3.Distance(peer.m_refPos, center);
+                if (distance < best) { best = distance; nearest = peer.m_uid; }
+            }
+            if (nearest == 0) return;
+            if (FullByPeer.Count < 16 || FullByPeer.ContainsKey(nearest)) FullByPeer[nearest] = FullByPeer.TryGetValue(nearest, out int n) ? n + 1 : 1;
+            if (elapsedMs <= worstFullMs) return;
+            worstFullMs = elapsedMs;
+            worstZone = zone;
+            worstPeer = nearest;
+            worstPeerDistance = best;
+        }
+
+        private static string PeerTag(long uid) => "peer_" + (uid & 0xFFFF).ToString("x4", System.Globalization.CultureInfo.InvariantCulture);
 
         private static ZoneGenerationMode Mode(ZoneSystem.SpawnMode mode)
         {
@@ -168,6 +205,21 @@ namespace BetterPerformance
                 labels.Add(new TextValue(key + "_peak_outcome", summary.Peak.Failed ? "exception" :
                     summary.Peak.Succeeded ? "returned_true" : "returned_false"));
             }
+            if (FullByPeer.Count > 0)
+            {
+                var byPeer = new System.Text.StringBuilder();
+                foreach (KeyValuePair<long, int> row in FullByPeer)
+                {
+                    if (byPeer.Length > 0) byPeer.Append(',');
+                    byPeer.Append(PeerTag(row.Key)).Append(':').Append(row.Value);
+                }
+                labels.Add(new TextValue("zone_generation_full_by_peer", byPeer.ToString()));
+                labels.Add(new TextValue("zone_generation_full_worst_zone", worstZone.x + "," + worstZone.y));
+                labels.Add(new TextValue("zone_generation_full_worst_peer", PeerTag(worstPeer)));
+                AddMs(gauges, "zone_generation_full_worst_ms", worstFullMs);
+                gauges.Add(new NumberValue("zone_generation_full_worst_peer_distance_m", Math.Round(worstPeerDistance, 1), "m"));
+                ClearAttribution();
+            }
             gauges.Add(new NumberValue("zone_generation_probe_failures", Interlocked.Exchange(ref probeFailures, 0), "calls"));
             gauges.Add(new NumberValue("zone_generation_other_thread_skips", Interlocked.Exchange(ref otherThreadSkips, 0), "calls"));
             labels.Add(new TextValue("zone_generation_status", Status));
@@ -190,11 +242,20 @@ namespace BetterPerformance
         private static void AddMs(List<NumberValue> gauges, string name, double value) =>
             gauges.Add(new NumberValue(name, Math.Round(value, 3), "ms"));
 
+        private static void ClearAttribution()
+        {
+            FullByPeer.Clear();
+            worstFullMs = worstPeerDistance = 0;
+            worstPeer = 0;
+            worstZone = default;
+        }
+
         internal static void Reset()
         {
             generation++;
             current = default;
             Window.Reset();
+            ClearAttribution();
             Interlocked.Exchange(ref probeFailures, 0);
             Interlocked.Exchange(ref otherThreadSkips, 0);
         }
@@ -203,6 +264,7 @@ namespace BetterPerformance
         {
             Installed = false;
             Status = "disabled";
+            attributeFull = null;
             Reset();
             try { Patches.UnpatchSelf(); }
             catch (Exception exception) { Status = "unpatch_failed_" + exception.GetType().Name; }
