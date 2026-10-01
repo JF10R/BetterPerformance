@@ -14,7 +14,8 @@ namespace BetterPerformance
     // A distant teleport holds its loading screen until 8 s have passed, even when the destination
     // loaded in 3. This ends it once everything near the player is loaded (TeleportArrivalPolicy),
     // by advancing m_teleportTimer past 8 s: vanilla then applies its own IsAreaReady and FindFloor
-    // in the same call. It never holds a teleport longer than vanilla. docs/teleport-loading.md.
+    // in the same call. It never holds a teleport longer than vanilla, and never ends one before the server
+    // has been sent the destination position (PositionJumpSync) plus one send cycle. docs/teleport-loading.md.
     internal static class FastTeleportArrival
     {
         private static readonly Harmony Patches = new Harmony(Plugin.PluginId + ".FastTeleportArrival");
@@ -28,8 +29,25 @@ namespace BetterPerformance
         private static AccessTools.FieldRef<ClutterSystem, bool>? grassForceRebuild;
         private static bool grassRequested;
         private static ManualLogSource? log;
+        // The decision follows static objects only (pieces, trees, rocks, locations); the all-object clock
+        // is kept to measure what ignoring creatures, drops and other moving objects saved.
         private static readonly TeleportArrivalPolicy.Settle Settle = new TeleportArrivalPolicy.Settle();
+        private static readonly TeleportArrivalPolicy.Settle SettleAll = new TeleportArrivalPolicy.Settle();
+        private static readonly TeleportArrivalPolicy.SettleCensus Census = new TeleportArrivalPolicy.SettleCensus();
+        // Checks, after the server could answer, in which a category/distance cell changed: what reset settling.
+        private static readonly long[] SettleChanges = new long[TeleportArrivalPolicy.SettleCensus.Cells];
+        private static readonly long[] Scratch = new long[TeleportArrivalPolicy.SettleCensus.Cells];
+        private static readonly Dictionary<int, SettleCategory> Categories = new Dictionary<int, SettleCategory>(256);
+        private const int CategoryCapacity = 4096;
         private static readonly List<ZDO> AreaObjects = new List<ZDO>();
+        // After the screen lifts: static objects that still arrive around the destination (a house missing).
+        private const double LateWindowSeconds = 5, LateAlarmObjects = 100;
+        private static bool lateActive;
+        private static Vector3 lateTarget;
+        private static double lateUntil, lateNextCheck;
+        private static int lateBase, lateGrowth;
+        private static long lateTeleports, lateOverAlarm, lateGrowthSum, lateGrowthMax;
+        private static double teleportStart, dynamicIgnoredMs;
         private static readonly long[] BlockerCounts = new long[Enum.GetValues(typeof(ArrivalBlocker)).Length];
         // Wall time each blocker held a distant teleport, applied or not: what to optimize next.
         private static readonly double[] BlockerWaitMs = new double[BlockerCounts.Length];
@@ -54,7 +72,9 @@ namespace BetterPerformance
             minimumSeconds = config.Bind("Teleport", "MinimumSeconds", 3f, new ConfigDescription(
                 "Shortest teleport, from entering the portal. Vanilla moves the player at 2 s and ends at 8 s at the earliest.", new AcceptableValueRange<float>(2.5f, 8f)));
             settleSeconds = config.Bind("Teleport", "SettleSeconds", 0.75f, new ConfigDescription(
-                "How long the set of objects the server sent around the destination must stay unchanged.", new AcceptableValueRange<float>(0.25f, 3f)));
+                "How long the static objects (buildings, trees, rocks) the server sent around the destination must stay unchanged, counted from " +
+                "when the server could first have answered the destination position. Creatures, item drops and other moving objects are ignored.",
+                new AcceptableValueRange<float>(0.25f, 3f)));
             nearRadius = config.Bind("Teleport", "NearRadius", 80f, new ConfigDescription(
                 "Radius around the destination where no terrain rebuild may still be queued (same default as [Terrain] RebuildCriticalRadius).", new AcceptableValueRange<float>(32f, 160f)));
             if (!option.Value) { Status = "disabled"; return; }
@@ -91,20 +111,23 @@ namespace BetterPerformance
             if (!Installed || !ReferenceEquals(__instance, Player.m_localPlayer)) return;
             try
             {
-                if (!teleporting!(__instance)) { if (active) End(); return; }
+                if (!teleporting!(__instance)) { if (active) End(); if (lateActive) SampleLate(Now); return; }
                 if (!distantTeleport!(__instance)) return;
                 double now = Now;
                 if (!active || !ReferenceEquals(activePlayer, __instance))
                 {
-                    active = true; activePlayer = __instance; Settle.Reset(); nextCheck = 0; lastBlocker = ArrivalBlocker.Moving; grassRequested = false;
-                    lastCheck = now;
+                    if (lateActive) FinishLate();
+                    active = true; activePlayer = __instance; Settle.Reset(); SettleAll.Reset(); Census.Reset();
+                    nextCheck = 0; lastBlocker = ArrivalBlocker.Moving; grassRequested = false;
+                    lastCheck = teleportStart = now;
                 }
                 float timer = teleportTimer!(__instance);
                 if (timer >= TeleportArrivalPolicy.NativeFloorSeconds || now < nextCheck) return;
                 nextCheck = now + CheckIntervalSeconds;
-                BlockerWaitMs[(int)lastBlocker] += (now - lastCheck) * 1000;
+                double elapsed = now - lastCheck;
+                BlockerWaitMs[(int)lastBlocker] += elapsed * 1000;
                 lastCheck = now;
-                var state = Observe(__instance, timer, now);
+                var state = Observe(__instance, timer, now, elapsed);
                 lastBlocker = TeleportArrivalPolicy.Blocker(state, minimumSeconds!.Value, settleSeconds!.Value);
                 if (lastBlocker == ArrivalBlocker.Grass && !grassRequested) RequestGrass();
                 if (lastBlocker != ArrivalBlocker.None) return;
@@ -115,6 +138,7 @@ namespace BetterPerformance
                 // Vanilla checks timer > 8 before IsAreaReady and FindFloor, both re-run this frame.
                 teleportTimer(__instance) = (float)TeleportArrivalPolicy.NativeFloorSeconds + 0.01f;
                 active = false;
+                StartLate(teleportTarget!(__instance), now);
             }
             catch (Exception exception)
             {
@@ -127,13 +151,78 @@ namespace BetterPerformance
         // A teleport that reached the native floor (or ended some other way) without an early arrival.
         private static void End()
         {
-            BlockerWaitMs[(int)lastBlocker] += (Now - lastCheck) * 1000;
+            double now = Now;
+            BlockerWaitMs[(int)lastBlocker] += (now - lastCheck) * 1000;
             active = false;
             nativeFloor++;
             BlockerCounts[(int)lastBlocker]++;
+            // The native arrival is the control for the late-object count.
+            if (activePlayer != null) StartLate(teleportTarget!(activePlayer), now);
         }
 
-        private static ArrivalState Observe(Player player, float timer, double now)
+        private static void StartLate(Vector3 target, double now)
+        {
+            lateActive = true;
+            lateTarget = target;
+            lateUntil = now + LateWindowSeconds;
+            lateNextCheck = 0;
+            lateBase = Census.StaticCount;
+            lateGrowth = 0;
+        }
+
+        private static void SampleLate(double now)
+        {
+            if (now < lateNextCheck) return;
+            lateNextCheck = now + CheckIntervalSeconds;
+            ZNetScene scene = ZNetScene.instance;
+            ZDOMan manager = ZDOMan.instance;
+            if (scene == null || manager == null) { lateActive = false; return; }
+            AreaObjects.Clear();
+            manager.FindSectorObjects(ZoneSystem.GetZone(lateTarget), new SimulationDistance(1, 0), AreaObjects);
+            int statics = 0;
+            foreach (ZDO zdo in AreaObjects)
+                if (!TeleportArrivalPolicy.IsDynamic(CategoryOf(scene, zdo.GetPrefab()))) statics++;
+            lateGrowth = Math.Max(lateGrowth, statics - lateBase);
+            if (now >= lateUntil) FinishLate();
+        }
+
+        private static void FinishLate()
+        {
+            lateActive = false;
+            lateTeleports++;
+            lateGrowthSum += lateGrowth;
+            if (lateGrowth > lateGrowthMax) lateGrowthMax = lateGrowth;
+            if (lateGrowth >= LateAlarmObjects) lateOverAlarm++;
+        }
+
+        // Unknown prefabs count as static: holding the screen is the safe side.
+        private static SettleCategory CategoryOf(ZNetScene scene, int hash)
+        {
+            if (Categories.TryGetValue(hash, out var known)) return known;
+            GameObject prefab = scene.GetPrefab(hash);
+            SettleCategory category = prefab == null ? SettleCategory.Static
+                : prefab.GetComponent<Piece>() != null ? SettleCategory.Piece
+                : prefab.GetComponent<Character>() != null ? SettleCategory.Creature
+                : prefab.GetComponent<ItemDrop>() != null ? SettleCategory.Item
+                : prefab.GetComponent<Projectile>() != null || prefab.GetComponent<Ragdoll>() != null ||
+                  prefab.GetComponent<Fish>() != null || prefab.GetComponent<RandomFlyingBird>() != null ? SettleCategory.Other
+                : SettleCategory.Static;
+            if (Categories.Count < CategoryCapacity) Categories[hash] = category;
+            return category;
+        }
+
+        // When the server could first have streamed the destination, on this Stopwatch clock; NaN until then.
+        private static double ServerInformedAt(Vector3 target, float timer, double now)
+        {
+            // No send hook: the native periodic send is due at most 2 s after the move.
+            if (!PositionJumpSync.Installed)
+                return now - timer + AssetUnloadPolicy.TeleportMoveSeconds + TeleportArrivalPolicy.NativeSendSeconds;
+            double sentAt = PositionJumpSync.LastSentAt;
+            if (double.IsNaN(sentAt) || sentAt < teleportStart) return double.NaN;
+            return Utils.DistanceXZ(PositionJumpSync.LastSentPosition, target) < 32f ? sentAt : double.NaN;
+        }
+
+        private static ArrivalState Observe(Player player, float timer, double now, double elapsed)
         {
             var state = new ArrivalState { TeleportSeconds = timer, StableSeconds = double.NaN };
             if (timer <= AssetUnloadPolicy.TeleportMoveSeconds) return state;
@@ -150,11 +239,25 @@ namespace BetterPerformance
             state.TerrainQueued = TerrainQueued(target, nearRadius!.Value);
             state.GrassReady = GrassReady(player.transform.position);
             state.DungeonPending = DungeonSpawnSlicing.PendingCount > 0;
-            // The same 3x3 zone set IsAreaReady walks: a count still moving means the server is still sending.
+            // Before the server has our destination it keeps streaming the old area, so a quiet destination
+            // proves nothing (2026-09-30: an empty house after a 3.1 s portal). Stability counts from then.
+            double informedAt = ServerInformedAt(target, timer, now);
+            state.ServerInformed = !double.IsNaN(informedAt) && now >= informedAt;
+            double notBefore = double.IsNaN(informedAt) ? double.NaN : informedAt + TeleportArrivalPolicy.ServerLeadSeconds;
+            // The same 3x3 zone set IsAreaReady walks: a static count still moving means the server is still sending.
             AreaObjects.Clear();
             manager.FindSectorObjects(ZoneSystem.GetZone(target), new SimulationDistance(1, 0), AreaObjects);
-            Settle.Observe(AreaObjects.Count, now);
-            state.StableSeconds = Settle.StableSeconds(now);
+            foreach (ZDO zdo in AreaObjects)
+                Census.Add(CategoryOf(scene, zdo.GetPrefab()), Vector3.Distance(zdo.GetPosition(), target));
+            bool counting = !double.IsNaN(notBefore) && now >= notBefore;
+            Census.Commit(counting ? SettleChanges : Scratch);
+            Settle.Observe(Census.StaticCount, now);
+            SettleAll.Observe(Census.TotalCount, now);
+            state.StableSeconds = Settle.StableSeconds(now, notBefore);
+            // Time the former all-object rule would still have held while only moving objects changed.
+            double all = SettleAll.StableSeconds(now, notBefore);
+            if (state.StableSeconds >= settleSeconds!.Value && !(all >= settleSeconds.Value))
+                dynamicIgnoredMs += Math.Max(0, elapsed) * 1000;
             return state;
         }
 
@@ -217,7 +320,21 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("fast_arrival_saved_ms_sum", Math.Round(savedMsSum, 1), "ms"));
             gauges.Add(new NumberValue("fast_arrival_failures", Take(ref failures), "calls"));
             gauges.Add(new NumberValue("fast_arrival_grass_prebuilt", Take(ref grassPrebuilt), "teleports"));
-            savedMsMax = savedMsSum = 0;
+            labels.Add(new TextValue("fast_arrival_server_signal", PositionJumpSync.Installed ? "position_send" : "native_cadence"));
+            gauges.Add(new NumberValue("fast_arrival_settle_dynamic_ignored_ms", Math.Round(dynamicIgnoredMs, 1), "ms"));
+            gauges.Add(new NumberValue("fast_arrival_late_teleports", Take(ref lateTeleports), "teleports"));
+            gauges.Add(new NumberValue("fast_arrival_late_static_max", Take(ref lateGrowthMax), "objects"));
+            gauges.Add(new NumberValue("fast_arrival_late_static_sum", Take(ref lateGrowthSum), "objects"));
+            gauges.Add(new NumberValue("fast_arrival_late_over_" + LateAlarmObjects, Take(ref lateOverAlarm), "teleports"));
+            for (int i = 0; i < SettleChanges.Length; i++)
+            {
+                if (SettleChanges[i] == 0) continue;
+                string category = ((SettleCategory)(i / TeleportArrivalPolicy.SettleCensus.Bands)).ToString().ToLowerInvariant();
+                string band = TeleportArrivalPolicy.SettleCensus.BandNames[i % TeleportArrivalPolicy.SettleCensus.Bands];
+                gauges.Add(new NumberValue("fast_arrival_settle_change_" + category + "_" + band, SettleChanges[i], "checks"));
+                SettleChanges[i] = 0;
+            }
+            savedMsMax = savedMsSum = dynamicIgnoredMs = 0;
             for (int i = 1; i < BlockerWaitMs.Length; i++)
             {
                 if (BlockerWaitMs[i] <= 0) continue;
@@ -243,7 +360,9 @@ namespace BetterPerformance
         internal static void Reset()
         {
             applied = nativeFloor = failures = grassPrebuilt = 0;
-            savedMsMax = savedMsSum = 0;
+            savedMsMax = savedMsSum = dynamicIgnoredMs = 0;
+            lateTeleports = lateOverAlarm = lateGrowthSum = lateGrowthMax = 0;
+            Array.Clear(SettleChanges, 0, SettleChanges.Length);
             Array.Clear(BlockerCounts, 0, BlockerCounts.Length);
             Array.Clear(BlockerWaitMs, 0, BlockerWaitMs.Length);
         }
@@ -253,8 +372,9 @@ namespace BetterPerformance
             try { Patches.UnpatchSelf(); } catch { }
             Installed = false;
             Status = "disabled";
-            active = false;
+            active = lateActive = false;
             activePlayer = null;
+            Categories.Clear();
             teleporting = distantTeleport = null;
             teleportTimer = null;
             teleportTarget = null;

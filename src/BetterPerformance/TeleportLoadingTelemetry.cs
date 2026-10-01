@@ -36,6 +36,9 @@ namespace BetterPerformance
         internal static bool Installed { get; private set; }
         internal static bool Enabled { get; set; }
         internal static string Status { get; private set; } = "disabled";
+        // Read-only context for HeightmapRebuildBudget's critical-rebuild gauges.
+        internal static bool Teleporting => Enabled && Timeline.Active;
+        internal static bool AfterArrival => Enabled && After.Active;
         private static double Now => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
 
         private sealed class Completed

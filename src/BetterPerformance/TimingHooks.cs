@@ -126,6 +126,7 @@ namespace BetterPerformance
                 Availability.Add(new TextValue("probe.SpawnAttempt", enabled ? "unavailable" : "disabled"));
             }
             AiTelemetry.Install(harmony, logger, enabled);
+            SpawnTelemetry.Install(harmony, logger, enabled);
             InstallBatch(harmony, logger, enabled, "CustomFixedUpdate", new[] { typeof(string), typeof(float) },
                 FixedBatches, nameof(FixedBatchPrefix), "Fixed-update batch probe");
             InstallBatch(harmony, logger, enabled, "CustomUpdate", new[] { typeof(string), typeof(float), typeof(float) },

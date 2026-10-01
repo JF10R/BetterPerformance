@@ -32,8 +32,13 @@ namespace BetterPerformance
         private const int LegCapacity = 64, FreshLimit = 256, NameCapacity = 64, NameLength = 40;
         // Look-back for a drop ZDO that arrives before its source's removal. 1 s (vs 250 ms)
         // favours coverage; loot_visibility_arrived_before_destroy_lead_max shows what it needs.
-        private const int LookBackCapacity = 128, PreRecordedCapacity = 4;
+        // 2048 (vs 128): every network arrival enters the ring, about 2,000/s in play (09-30 overwrote 26,000).
+        private const int LookBackCapacity = 2048, PreRecordedCapacity = 4;
         private const double LookBackMs = 1000;
+        // v5 spawn gate: a drop's synced spawn stamp must fall within this of its source's t0. A vein's
+        // areas broken one hit apart (1.4 s and more on 09-30) are then told apart; clocks are re-synced
+        // from the server every 2 s, so the skew between two clients stays well under it.
+        private const double SpawnToleranceMs = 1000;
         // A drop settles after its spawn point: it falls and rolls before the owner's first send.
         private const double SettleMetres = 2, MinimumSpreadMetres = 4, MaxDropItems = 64;
         private const byte KindRock = 1, KindTree = 2, KindLog = 3, KindDestructible = 4, KindArea = 5, KindFracture = 6;
@@ -119,7 +124,7 @@ namespace BetterPerformance
                 installedRadius = Math.Max(2, Math.Min(32, radius.Value));
                 installedWindowMs = Math.Max(1, Math.Min(15, windowSeconds.Value)) * 1000.0;
                 tracker = new LootVisibilityTracker<ZDOID>(DestructionCapacity, ArrivalCapacity,
-                    installedRadius, installedWindowMs, SpawnCheck, LookBackCapacity, LookBackMs);
+                    installedRadius, installedWindowMs, SpawnCheck, LookBackCapacity, LookBackMs, SpawnToleranceMs);
                 // A prefix: RPC_SetAreaHealth ends in UpdateMesh, which deactivates the destroyed
                 // area's collider, and an inactive collider reports empty bounds.
                 Patches.Patch(areaHealth, prefix: new HarmonyMethod(typeof(LootVisibilityTelemetry), nameof(BeforeSetAreaHealth)));
@@ -796,8 +801,8 @@ namespace BetterPerformance
             labels.Add(new TextValue("loot_visibility_status", Status));
             labels.Add(new TextValue("loot_visibility_enabled", Enabled && Status == "installed" ? "true" : "false"));
             labels.Add(new TextValue("loot_visibility_scope",
-                "t2_is_ZNetScene.AddInstance; arrival_missing_is_unmeasured; area_t0_is_hit_area_centre; owned_sources_excluded; owner_t0_before_drops; arrival_look_back_1s"));
-            labels.Add(new TextValue("loot_visibility_attribution", "network_arrival_look_back_v4"));
+                "t2_is_ZNetScene.AddInstance; arrival_missing_is_unmeasured; area_t0_is_hit_area_centre; owned_sources_excluded; owner_t0_before_drops; arrival_look_back_1s; spawn_stamp_within_1s_of_t0"));
+            labels.Add(new TextValue("loot_visibility_attribution", "network_arrival_look_back_spawn_gate_v5"));
             labels.Add(new TextValue("loot_visibility_legs_status", LegsStatus));
             gauges.Add(new NumberValue("loot_visibility_probe_failures", intervalFailures, "calls"));
             gauges.Add(new NumberValue("loot_visibility_unknown_prefabs", unknownPrefabs, "observations"));
@@ -855,6 +860,15 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("loot_visibility_arrived_before_destroy", summary.ArrivedBeforeDestroy, "observations"));
             gauges.Add(new NumberValue("loot_visibility_arrived_before_destroy_lead_max", summary.ArrivedBeforeDestroyLeadMaxMs, "ms"));
             gauges.Add(new NumberValue("loot_visibility_look_back_overwritten", summary.LookBackOverwritten, "arrivals"));
+            gauges.Add(new NumberValue("loot_visibility_spawn_gate_rejected", summary.SpawnGateRejected, "candidates"));
+            gauges.Add(new NumberValue("loot_visibility_spawn_mismatch", summary.SpawnMismatch, "observations"));
+            gauges.Add(new NumberValue("loot_visibility_owner_spawn_mismatch", summary.OwnerSpawnMismatch, "observations"));
+            gauges.Add(new NumberValue("loot_visibility_spawn_unknown", summary.SpawnUnknown, "observations"));
+            if (!double.IsNaN(summary.SpawnLagMinMs))
+            {
+                gauges.Add(new NumberValue("loot_visibility_spawn_lag_min", summary.SpawnLagMinMs, "ms"));
+                gauges.Add(new NumberValue("loot_visibility_spawn_lag_max", summary.SpawnLagMaxMs, "ms"));
+            }
             gauges.Add(new NumberValue("loot_visibility_censored", summary.Censored, "entries"));
             gauges.Add(new NumberValue("loot_visibility_destruction_overflow", summary.Overflowed, "destructions"));
             gauges.Add(new NumberValue("loot_visibility_arrival_capacity_skips", summary.ArrivalCapacitySkipped, "observations"));
@@ -896,7 +910,7 @@ namespace BetterPerformance
             freshSkipped = 0;
         }
 
-        // drop<kind:source,d=m,net=ms,cre=ms,cand=before/after_table,own=excluded; ...
+        // drop<kind:source,d=m,net=ms,cre=ms,cand=before/after_table,own=excluded[,lag=spawn-t0 ms]; ...
         private static string FormatWitnesses(LootVisibilityTracker<ZDOID>.Witness[] witnesses)
         {
             var text = new StringBuilder(witnesses.Length * 96);
@@ -912,6 +926,8 @@ namespace BetterPerformance
                     .Append(",cand=").Append(witness.CandidatesBefore.ToString(CultureInfo.InvariantCulture))
                     .Append('/').Append(witness.CandidatesAfterTable.ToString(CultureInfo.InvariantCulture))
                     .Append(",own=").Append(witness.OwnedExcluded.ToString(CultureInfo.InvariantCulture));
+                if (!double.IsNaN(witness.SpawnLagMs))
+                    text.Append(",lag=").Append(witness.SpawnLagMs.ToString("0", CultureInfo.InvariantCulture));
             }
             return text.ToString();
         }

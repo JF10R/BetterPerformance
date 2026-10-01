@@ -445,7 +445,9 @@ def bottleneck_report(records):
               'Memory categories overlap and must not be added; growth during loading is not proof of a leak.', '']
     memory_keys = ['process_working_set', 'process_private_commit', 'unity_allocated_memory',
                    'unity_reserved_memory', 'unity_unused_reserved_memory', 'unity_managed_used',
-                   'unity_managed_reserved', 'map_cache_retained_bytes']
+                   'unity_managed_reserved', 'map_cache_retained_bytes', 'video_memory_local_usage',
+                   'video_memory_local_budget', 'video_memory_nonlocal_usage', 'system_physical_available',
+                   'system_commit_total']
     memory = [(k, [g[k] / (1024 * 1024) for g in rows if k in g]) for k in memory_keys]
     memory = [(k, values) for k, values in memory if values]
     if memory:

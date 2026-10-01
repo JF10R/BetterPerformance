@@ -46,23 +46,44 @@ and the map serialization and `ZPackage` build that stay on the main thread. It 
 allocation fix only. `cloud_write_bytes` is payload, not Steam quota. No file names are
 exported.
 
-## Phase attribution inside CharacterSaveToDisk
+## Phase attribution of a character save
 
 `[Diagnostics] CharacterSaveDiskPhases` defaults to `true` and requires restart. It breaks
-`PlayerProfile.SavePlayerToDisk` into the phases below, attributed only while that call is
-on the stack on its own thread; `ZPackage.GenerateHash`/`GetArray` and `FileWriter` also
-serve the world-save path and are excluded there by the same scope flag.
+`Game.SavePlayerProfile` (`CharacterSave`) and `PlayerProfile.SavePlayerToDisk`
+(`CharacterSaveToDisk`) into the main-thread phases below, each attributed only while its
+parent is on the stack of the same thread; `ZPackage.GenerateHash`/`GetArray`, `FileWriter`,
+`Inventory.Save` and the save catalog also serve world saves and containers and are excluded
+there. All timings are elapsed ms. *Hook* rows time one native call; *gap* rows time the span
+between two hooked calls, whose native order the game-contract test pins.
 
-| Timing | Native scope | Interpretation |
+| Timing | Kind | Native scope |
 | --- | --- | --- |
-| `CharacterSaveCloudChecks` | `SaveSystem.PreSaveCloudChecksAndOperations` | Cloud quota check and pending move/backup decision |
-| `CharacterSaveHash` | `ZPackage.GenerateHash` | `GetArray` copy plus `SHA512.ComputeHash` over the built package |
-| `CharacterSaveWrite` | `FileWriter` construction through `Finish` | Spans the inline `m_binary.Write` calls between them: local file flush or the cloud chunk upload |
-| `CharacterSaveReplace` | `FileHelpers.ReplaceOldFile` | `.old` rotation and the atomic rename/move into place |
-| `CharacterSaveBackup` | `ZNet.ConsiderAutoBackup` | Auto-backup interval check, and the copy itself when due |
+| `CharacterSavePlayerData` | hook | `PlayerProfile.SavePlayerData`: `Player.Save` plus a `GetArray` copy |
+| `CharacterSaveInventory`, `CharacterSaveSkills` | hook, nested in PlayerData | `Inventory.Save`, `Skills.Save` |
+| `CharacterSaveMapData` | hook | `Minimap.SaveMapData`: `GetMapData` (`MapSerialization`) and its store |
+| `CharacterSaveCloudChecks` | hook | `SaveSystem.PreSaveCloudChecksAndOperations` |
+| `CharacterSaveBuild` | gap | cloud checks to hash: folder check, stats, world data (map bytes copied in), player data |
+| `CharacterSaveHash` | hook | `ZPackage.GenerateHash`: a `GetArray` copy plus SHA-512 |
+| `CharacterSaveGetArray` | gap | hash to `FileWriter`: the second full package copy, nothing else |
+| `CharacterSaveOpen` | hook | `FileWriter` constructor: `File.Create` (local) or a `MemoryStream` (cloud) |
+| `CharacterSaveBufferWrite` | gap | constructor to `Finish`: the inline `BinaryWriter.Write` calls only |
+| `CharacterSaveFinish` | hook | `FileWriter.Finish`: flush, `Flush(flushToDisk: true)` (local) or chunked cloud upload, close |
+| `CharacterSaveWrite` | hook span | constructor end through `Finish` = BufferWrite + Finish; kept for older captures |
+| `CharacterSaveReplace` | hook | `FileHelpers.ReplaceOldFile`: `.old` rotation and rename |
+| `CharacterSaveBackup` | hook | `ZNet.ConsiderAutoBackup` |
+| `CharacterSaveCatalogReload` | hook, nested in Backup or CloudChecks | `SaveCollection.Reload` (characters only): lists the folder and stats every file, backups included; forced because the save invalidates the catalog twice first |
+| `CharacterSaveBackupCopy` | hook, nested in Backup | `SaveSystem.Copy`, only when an auto-backup is due |
+| `CharacterSaveToDiskUnaccounted` | remainder | `CharacterSaveToDisk` minus CloudChecks, Build, Hash, GetArray, Open, BufferWrite, Finish, Replace, Backup |
+| `CharacterSaveUnaccounted` | remainder | `CharacterSave` minus PlayerData, MapData, ToDisk: mount, loading-screen push/pop, logout point, cloud-capacity check, achievement sync |
 
-These are sequential, not nested, so summing them approximates (never exceeds) the parent
-`CharacterSaveToDisk` total; the gap is the ZPackage build (stat/world-data serialization)
-and the second `GetArray` call, neither separately timed. Gauges: `character_save_package_bytes`
-(interval max of the written package length) and label `character_save_file_source`
-(`local`/`cloud`/`none` when no save completed that interval).
+The non-nested rows of one level sum to their parent; a remainder is clamped at 0 and also
+absorbs a failed-cloud local dump and any probe named in `character_save_probes_missing`
+(`none` when all installed). Gauges, per capture interval: `character_saves` and
+`character_save_trigger_{periodic,server_rpc,logout,sleep_wake,other}` (only saves that reached
+the disk; the trigger comes from the call arguments, `Game.m_shuttingDown` and
+`m_saveTimer > m_saveInterval` read before the save zeroes it),
+`character_save_direct_disk_saves` (a disk save outside `SavePlayerProfile`), and interval
+maxima `character_save_package_bytes`, `character_save_player_data_bytes`,
+`character_save_map_data_bytes` (compressed) and `character_save_catalog_files`. Label
+`character_save_file_source` is `local`/`cloud`/`none`. Map compression itself is timed by the
+map compression cache gauges, not here.

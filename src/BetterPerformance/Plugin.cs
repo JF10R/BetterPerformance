@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.19";
+        public const string PluginVersion = "0.4.20";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -74,6 +74,7 @@ namespace BetterPerformance
             RenderTelemetry.Enabled = Config.Bind("Diagnostics", "SparseRenderTimingEnabled", false,
                 "Optional sparse completed-frame CPU/GPU samples when the shipped engine exposes frame timings; never frame percentiles.").Value;
             EngineTelemetry.Install(Config, Logger);
+            SystemTelemetry.Install(Config, Logger);
             FramePacingTelemetry.Install(Config, Logger);
             if (Config.Bind("MapSaving", "ExactCompressionCacheEnabled", false,
                 "Reuse compressed output only when the complete native serialized map input is byte-identical. Retains a bounded cache (up to 24 MiB) and requires restart.").Value)
@@ -115,6 +116,8 @@ namespace BetterPerformance
             TerrainPaintOnlyReload.Install(Config, Logger);
             // 0.4.19: jump delays always measured; the early send (client) and relay (server) stay opt-in.
             PositionJumpSync.Install(Config, Logger);
+            // 0.4.20 opt-in: another player's map pin jumps with them instead of gliding at 200 m/s.
+            MinimapPlayerPinSnap.Install(Config, Logger);
             new Terminal.ConsoleCommand("bp_budget", "Experimental object budget: on | off | status (installed at startup; local process only)",
                 (Terminal.ConsoleEvent)(args =>
                 {
@@ -385,7 +388,7 @@ namespace BetterPerformance
                     || CloudWriteOptimization.Enabled || MinimapTextureCache.Enabled || BiomePointCache.Enabled || ReplicationCadence.CadenceActive || ReplicationCadence.BirdVelocityActive || OwnershipExpedite.Enabled || SectorInvalidationFix.Enabled || NetworkFlow.Enabled || NetworkCompression.Enabled
                     || GuiSoundDeduplication.Enabled || MiningDropPlacement.Enabled || DungeonSpawnSlicing.Enabled || MapPrecompression.Installed
                     || HeightmapRebuildBudget.Enabled || IdleZonePregeneration.Installed || AssetUnloadDeferral.Installed || FastTeleportArrival.Installed || TeleportZonePreparation.PrefetchInstalled || TerrainPaintOnlyReload.Installed
-                    || PositionJumpSync.SendEnabled || PositionJumpSync.RelayEnabled
+                    || PositionJumpSync.SendEnabled || PositionJumpSync.RelayEnabled || MinimapPlayerPinSnap.Installed
                     ? "diagnostics_with_optional_optimizations" : "diagnostics_only"),
                 new TextValue("map_serialization_status", FastMapSerialization.Status),
                 new TextValue("queue_semantics", "socket API result; active mods may adjust it or make it negative"),
@@ -405,6 +408,8 @@ namespace BetterPerformance
             var startGauges = new List<NumberValue>();
             try { HostTelemetry.StartLabels(metadata, startGauges); }
             catch (Exception exception) { Logger.LogWarning("Host telemetry start labels unavailable: " + exception.GetType().Name); }
+            try { SystemTelemetry.StartLabels(metadata, startGauges); }
+            catch (Exception exception) { Logger.LogWarning("System telemetry start labels unavailable: " + exception.GetType().Name); }
             process?.Dispose();
             process = Process.GetCurrentProcess();
             previousCpuMs = process.TotalProcessorTime.TotalMilliseconds;
@@ -415,6 +420,7 @@ namespace BetterPerformance
             LootVisibilityTelemetry.Reset();
             ObjectCreationBudget.ResetTelemetry();
             AiTelemetry.Reset();
+            SpawnTelemetry.Reset();
             ThreadCpuTelemetry.Reset();
             OwnershipTelemetry.Reset();
             OwnershipExpedite.Reset();
@@ -440,6 +446,7 @@ namespace BetterPerformance
             TeleportZonePreparation.Reset();
             TerrainPaintOnlyReload.Reset();
             PositionJumpSync.Reset();
+            MinimapPlayerPinSnap.Reset();
             CharacterSaveDiskTelemetry.Reset();
             RenderTelemetry.Reset();
             EngineTelemetry.Reset();
@@ -465,12 +472,14 @@ namespace BetterPerformance
             LootQueueTelemetry.Sample(gauges, labels);
             LootVisibilityTelemetry.Sample(gauges, labels);
             AiTelemetry.Sample(gauges, labels);
+            SpawnTelemetry.Sample(gauges, labels);
             SimulationPopulationTelemetry.Sample(gauges, labels);
             ThreadCpuTelemetry.Sample(gauges, labels);
             HostTelemetry.Sample(gauges, labels);
             ResourceTelemetry.Sample(gauges, labels);
             RenderTelemetry.Sample(gauges, labels);
             EngineTelemetry.Sample(gauges, labels);
+            SystemTelemetry.Sample(gauges, labels);
             FramePacingTelemetry.Sample(gauges, labels);
             MapCompressionCache.Sample(gauges, labels);
             MapPrecompression.Sample(gauges, labels);
@@ -501,6 +510,7 @@ namespace BetterPerformance
             TeleportZonePreparation.Sample(gauges, labels);
             TerrainPaintOnlyReload.Sample(gauges, labels);
             PositionJumpSync.Sample(gauges, labels);
+            MinimapPlayerPinSnap.Sample(gauges, labels);
             HeightmapRebuildBudget.Sample(gauges, labels);
             CharacterSaveDiskTelemetry.Sample(gauges, labels);
             AttributionTelemetry.Sample(gauges, labels);
@@ -600,6 +610,8 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { AiTelemetry.Finish(gauges, labels); }
             catch { session.RecordProbeFailure(); }
+            try { SpawnTelemetry.Finish(gauges, labels); }
+            catch { session.RecordProbeFailure(); }
             try { ActionTelemetry.Finish(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { OwnershipTelemetry.Sample(gauges, labels); OwnershipExpedite.Sample(gauges, labels); SectorInvalidationFix.Sample(gauges, labels); NetworkFlow.Sample(gauges, labels); NetworkCompression.Sample(gauges, labels); CaptureRelay.Sample(gauges, labels); }
@@ -614,7 +626,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { ZoneGenerationTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { IdleZonePregeneration.Sample(gauges, labels); AssetUnloadDeferral.Sample(gauges, labels); TeleportLoadingTelemetry.Sample(gauges, labels); FastTeleportArrival.Sample(gauges, labels); TeleportZonePreparation.Sample(gauges, labels); TerrainPaintOnlyReload.Sample(gauges, labels); PositionJumpSync.Sample(gauges, labels); }
+            try { IdleZonePregeneration.Sample(gauges, labels); AssetUnloadDeferral.Sample(gauges, labels); TeleportLoadingTelemetry.Sample(gauges, labels); FastTeleportArrival.Sample(gauges, labels); TeleportZonePreparation.Sample(gauges, labels); TerrainPaintOnlyReload.Sample(gauges, labels); PositionJumpSync.Sample(gauges, labels); MinimapPlayerPinSnap.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { HeightmapRebuildBudget.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -685,12 +697,14 @@ namespace BetterPerformance
             TeleportZonePreparation.Uninstall();
             TerrainPaintOnlyReload.Uninstall();
             PositionJumpSync.Uninstall();
+            MinimapPlayerPinSnap.Uninstall();
             CharacterSaveDiskTelemetry.Uninstall();
             AttributionTelemetry.Uninstall();
             LoadingTelemetry.Uninstall();
             LoadingDetailsTelemetry.Uninstall();
             InitialLoadingOptimization.Uninstall();
             EngineTelemetry.Uninstall();
+            SystemTelemetry.Uninstall();
             FramePacingTelemetry.Uninstall();
             instance = null;
             process?.Dispose();

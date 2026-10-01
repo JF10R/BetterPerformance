@@ -1,5 +1,22 @@
 # Changelog
 
+### 0.4.20
+
+- Fast portal arrival: never ends a teleport before the server has been sent the destination position (new blocker `server`, from `PositionJumpSync`'s send hook; without it, 2 s after the move). The settle check now counts from 0.3 s after that send and follows static objects only (pieces, trees, rocks, locations); creatures, item drops, projectiles, ragdolls, fish and birds are ignored.
+  - Why: on 2026-09-30 a 3.1 s portal (client without the early position send) ended while the server was still streaming the old area. The empty destination looked settled, and a whole base appeared after the screen lifted.
+  - New gauges: what reset settling, by category and distance band (`fast_arrival_settle_change_*`); time saved by ignoring moving objects; static objects still arriving in the 5 s after any distant arrival (`fast_arrival_late_static_*`, `fast_arrival_late_over_100`).
+- Add opt-in map pin snap (`[Map] SnapPlayerPinsOnJumpEnabled`, client; `PlayerPinJumpMeters` 64). The game glides another player's map pin at 200 m/s, so a pin took 8 s to follow a 1.6 km portal and 20 s for 4 km, whatever the network did. A jump now places the pin at once; walking keeps the glide. Gauges `map_pin_snap_*`.
+- Loot-visibility attribution v5: a candidate source stays only if the drop's own spawn stamp is within 1 s of the source's destruction. On 2026-09-30 every drop read over 1 s came from a mined vein and was paired with a single area; distance alone could not tell a mispaired drop from a late one that had rolled away. New gauges `loot_visibility_spawn_*`, `lag=` in witnesses. The look-back ring grows from 128 to 2,048 entries (26,000 eligible entries were overwritten in one session).
+- Character save telemetry: every main-thread phase of a save is timed: player data (inventory, skills), map data, package build, file open, buffered writes, flush to disk, the character list reload, the backup copy. Also the unaccounted remainder, payload sizes, and the trigger (periodic, server, logout, sleep). It is the largest in-play stall left for one client (about 200 ms).
+- Heightmap rebuild budget, observation only (decisions unchanged): critical rebuilds by distance band, cost, count per frame, the rule that made them critical, zone age and teleport context (`heightmap_budget_critical_*`). Ages that span a zone unload are reported apart (`heightmap_budget_age_across_reload*`): on 2026-09-30, deferrals of 33.8 s and 13.3 s were that, not waiting.
+- Add system resource telemetry (`[Diagnostics] SystemResourcesEnabled`, `VideoMemoryQueryEnabled`, read-only):
+  - video memory used and the budget Windows grants this process (DXGI);
+  - system RAM and commit, machine CPU load and clock, mains or battery power;
+  - process, system and session uptime;
+  - hardware labels, and graphics proxy modules (ReShade) when one is loaded.
+  - Why: one client's GPU frame time climbed from 17 to 42 ms over two hours at equal or lighter load, and frames over 50 ms rose from 3 to 120 a minute. Heat, video memory and power could not be told apart.
+- Add spawn telemetry, read-only: creatures spawned per species, by day, night and event. Also refusals where the game decides them: species cap, no valid point, point inside a player-base area (ValheimPlus can widen it to 50 m), another one too close. The Mountain spawn table is logged once per world load.
+
 ### 0.4.19
 
 - Add position jump sync (`[Teleport] SendPositionOnJumpEnabled` client, `RelayPlayerListOnJumpEnabled` server, both opt-in; `PositionJumpMeters` 64). After a portal or respawn the client sends its position at once instead of within 2 s, and the server relays the player list at once. The server chooses what to stream around that position, and the map draws players from that list. On 2026-09-26, other players' map icons lagged 0–4 s after fast portals. Same native messages and values. The delays are always measured (`position_jump_*`, `player_list_*`), docs/position-jump-sync.md.

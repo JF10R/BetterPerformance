@@ -67,6 +67,8 @@ namespace BetterPerformance.Core
             public byte SourceKind;
             public double DistanceMetres, NetworkMs, CreationMs, PerceivedMs;
             public int CandidatesBefore, CandidatesAfterTable, OwnedExcluded;
+            // Drop spawn (its own stamp, on this clock) minus the source's t0; NaN when unstamped.
+            public double SpawnLagMs;
         }
 
         public struct Summary
@@ -89,6 +91,11 @@ namespace BetterPerformance.Core
             // look-back entries replaced while still inside the look-back.
             public long ArrivedBeforeDestroy, LookBackOverwritten;
             public double ArrivedBeforeDestroyLeadMaxMs;
+            // v5 spawn gate: candidates refused because the drop spawned too far from their t0,
+            // drops left with no candidate by it (observer / owner), drops without a spawn stamp,
+            // and the spawn lag range of the timed matches (NaN when none).
+            public long SpawnGateRejected, SpawnMismatch, OwnerSpawnMismatch, SpawnUnknown;
+            public double SpawnLagMinMs, SpawnLagMaxMs;
             public int PendingDestructions, PendingArrivals;
             // One histogram of the perceived duration; null only on a default instance.
             public long[] PerceivedBuckets;
@@ -102,18 +109,25 @@ namespace BetterPerformance.Core
         private readonly long[] buckets = new long[BucketCount];
         private readonly Witness[] witnesses = new Witness[WitnessCapacity];
         private readonly Func<int, int, bool>? canSpawn;
-        private readonly double radius, radiusSquared, windowMs, lookBackMs;
+        private readonly double radius, radiusSquared, windowMs, lookBackMs, spawnToleranceMs;
         private readonly int arrivalCapacity;
         private readonly Recent[] recent;
         private int head, active, witnessCount, recentHead;
         private Summary interval;
+        private double lagMin, lagMax;
+        private bool hasLag;
 
         // canSpawn(sourcePrefab, dropPrefab) answers the drop-table question; null accepts
         // every pair, which is the v2 rule and what a source without a table relies on.
-        // lookBackCapacity 0 disables the v4 look-back (the v3 rule).
+        // lookBackCapacity 0 disables the v4 look-back (the v3 rule). spawnToleranceMs (v5): a candidate
+        // stays only if the drop's own spawn time is within this of the candidate's t0, which separates
+        // a vein's areas broken one hit apart; NaN disables the gate (the v4 rule).
         public LootVisibilityTracker(int destructionCapacity, int arrivalCapacity, double radiusMetres, double windowMs,
-            Func<int, int, bool>? canSpawn = null, int lookBackCapacity = 0, double lookBackMs = 0)
+            Func<int, int, bool>? canSpawn = null, int lookBackCapacity = 0, double lookBackMs = 0, double spawnToleranceMs = double.NaN)
         {
+            if (!double.IsNaN(spawnToleranceMs) && (!(spawnToleranceMs > 0) || double.IsInfinity(spawnToleranceMs)))
+                throw new ArgumentOutOfRangeException(nameof(spawnToleranceMs));
+            this.spawnToleranceMs = spawnToleranceMs;
             if (destructionCapacity < 1 || destructionCapacity > 4096) throw new ArgumentOutOfRangeException(nameof(destructionCapacity));
             if (arrivalCapacity < 1 || arrivalCapacity > 16384) throw new ArgumentOutOfRangeException(nameof(arrivalCapacity));
             if (!(radiusMetres > 0) || double.IsInfinity(radiusMetres)) throw new ArgumentOutOfRangeException(nameof(radiusMetres));
@@ -244,7 +258,7 @@ namespace BetterPerformance.Core
                     if (locallyOwned)
                     {
                         interval.LocallyOwned++;
-                        ownerMatched = MatchOwner(x, y, z, nowMs, dropPrefab);
+                        ownerMatched = MatchOwner(x, y, z, nowMs, dropPrefab, spawnAgeMs);
                     }
                 }
                 return false;
@@ -255,7 +269,8 @@ namespace BetterPerformance.Core
             if (spawnAgeMs > windowMs + StaleMarginMs) { interval.Stale++; return false; }
             if (arrival.Owned > 0) interval.OwnedSourceExcluded++;
             if (arrival.Count == 0) { interval.OwnedOnly++; return false; }
-            int live = 0, table = 0, near = 0;
+            double spawnAt = SpawnAt(nowMs, spawnAgeMs);
+            int live = 0, table = 0, inRadius = 0, near = 0;
             Candidate match = default;
             for (int i = 0; i < arrival.Count; i++)
             {
@@ -265,6 +280,8 @@ namespace BetterPerformance.Core
                 if (canSpawn != null && !canSpawn(candidate.Source, dropPrefab)) continue;
                 table++;
                 if (candidate.DistanceSquared > candidate.Radius * candidate.Radius) continue;
+                inRadius++;
+                if (!SpawnFits(spawnAt, candidate.AtMs)) { interval.SpawnGateRejected++; continue; }
                 near++;
                 match = candidate;
             }
@@ -272,7 +289,9 @@ namespace BetterPerformance.Core
             // A fifth candidate was not kept, so no single survivor is proof.
             if (arrival.Truncated) { interval.CandidatesTruncated++; interval.Ambiguous++; return false; }
             if (table == 0) { interval.Foreign++; return false; }
-            if (near == 0) { interval.OutOfRadius++; return false; }
+            if (inRadius == 0) { interval.OutOfRadius++; return false; }
+            // Every nearby source was broken too long before this drop spawned: its real source was not observed.
+            if (near == 0) { interval.SpawnMismatch++; return false; }
             if (near > 1) { interval.Ambiguous++; return false; }
             // One destroyed hit area drops several items, so the destruction stays live
             // until the window expires instead of being consumed by the first drop.
@@ -301,20 +320,43 @@ namespace BetterPerformance.Core
                 interval.CreationMaxMs = Math.Max(interval.CreationMaxMs, creation);
             }
             if (perceived > SlowMs) interval.PerceivedOverOneSecond++;
+            double lag = spawnAt - match.AtMs;
+            if (!double.IsNaN(lag))
+            {
+                lagMin = hasLag ? Math.Min(lagMin, lag) : lag;
+                lagMax = hasLag ? Math.Max(lagMax, lag) : lag;
+                hasLag = true;
+            }
             Witnessed(new Witness
             {
                 DropPrefab = dropPrefab, SourcePrefab = match.Source, SourceKind = match.Kind,
                 DistanceMetres = Math.Sqrt(match.DistanceSquared), NetworkMs = network, CreationMs = creation,
-                PerceivedMs = perceived, CandidatesBefore = live, CandidatesAfterTable = table, OwnedExcluded = arrival.Owned
+                PerceivedMs = perceived, CandidatesBefore = live, CandidatesAfterTable = table, OwnedExcluded = arrival.Owned,
+                SpawnLagMs = lag
             });
             return true;
         }
+
+        // The drop's spawn moment on this clock from its synced spawn stamp; NaN when unstamped. Counts
+        // the unstamped ones (logs) once the gate is on, since they are matched without it.
+        private double SpawnAt(double nowMs, double spawnAgeMs)
+        {
+            if (double.IsNaN(spawnToleranceMs)) return double.NaN;
+            if (double.IsNaN(spawnAgeMs) || double.IsInfinity(spawnAgeMs)) { interval.SpawnUnknown++; return double.NaN; }
+            return nowMs - spawnAgeMs;
+        }
+
+        private bool SpawnFits(double spawnAt, double destroyedAtMs) =>
+            double.IsNaN(spawnAt) || Math.Abs(spawnAt - destroyedAtMs) <= spawnToleranceMs;
 
         public Summary Drain(double nowMs)
         {
             ValidateTime(nowMs);
             Expire(nowMs);
             var summary = interval;
+            summary.SpawnLagMinMs = hasLag ? lagMin : double.NaN;
+            summary.SpawnLagMaxMs = hasLag ? lagMax : double.NaN;
+            hasLag = false;
             summary.PendingDestructions = active;
             summary.PendingArrivals = arrivals.Count;
             summary.PerceivedBuckets = (long[])buckets.Clone();
@@ -344,6 +386,7 @@ namespace BetterPerformance.Core
             else
             {
                 interval = default;
+                hasLag = false;
                 witnessCount = 0;
                 Array.Clear(buckets, 0, buckets.Length);
             }
@@ -390,19 +433,24 @@ namespace BetterPerformance.Core
         // The owner's drops appear in the frame of its own destruction, at the kind's spawn
         // spread. The caller must record a destruction before its drops (v4 does for tree,
         // destructible and plain rock); one recorded after them never matches.
-        private bool MatchOwner(double x, double y, double z, double nowMs, int dropPrefab)
+        // v5: the drop's spawn stamp must fall within the tolerance of the destruction, so an old drop
+        // re-instantiated near a fresh destruction, or a vein area broken a hit earlier, is not timed.
+        private bool MatchOwner(double x, double y, double z, double nowMs, int dropPrefab, double spawnAgeMs)
         {
-            int matches = 0;
+            int matches = 0, gated = 0;
             double destroyedAt = 0;
+            double spawnAt = SpawnAt(nowMs, spawnAgeMs);
             for (int i = 0; i < destructions.Length; i++)
             {
                 var entry = destructions[i];
                 if (!entry.Active || !entry.Owned || !Live(entry, nowMs)) continue;
                 if (DistanceSquared(entry.X, entry.Y, entry.Z, x, y, z) > entry.Radius * entry.Radius) continue;
                 if (canSpawn != null && !canSpawn(entry.Source, dropPrefab)) continue;
+                if (!SpawnFits(spawnAt, entry.AtMs)) { gated++; interval.SpawnGateRejected++; continue; }
                 matches++;
                 destroyedAt = entry.AtMs;
             }
+            if (matches == 0 && gated > 0) { interval.OwnerSpawnMismatch++; return false; }
             if (matches == 0) { interval.OwnerUnmatched++; return false; }
             if (matches > 1) { interval.OwnerAmbiguous++; return false; }
             double elapsed = nowMs - destroyedAt;

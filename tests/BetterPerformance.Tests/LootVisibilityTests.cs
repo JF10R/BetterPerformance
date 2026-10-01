@@ -28,7 +28,49 @@ internal static class LootVisibilityTests
         LookBackIsBoundedByAgeAndCapacity();
         LookBackSkipsOwnedAndClassifiedEntries();
         OwnerSourceRecordedBeforeItsDropsIsMatched();
+        SpawnGateSeparatesAVeinsAreas();
         LootSendLegTests.Run();
+    }
+
+    // 2026-09-30: silver-vein drops read 1.4-4.8 s against the area broken one hit earlier. The drop's own
+    // spawn stamp decides: its source broke within the tolerance of its spawn, or it was not observed.
+    private static void SpawnGateSeparatesAVeinsAreas()
+    {
+        Rejects(() => new LootVisibilityTracker<int>(32, 256, 12, 5000, Table, 128, 1000, 0), "A zero tolerance is invalid.");
+
+        // B's removal was never observed: v4 times B's drop against A, v5 refuses it.
+        var v4 = LookBack();
+        v4.Destroyed(0, 0, 0, 1000, 100, 5, false, 4);
+        v4.Arrived(1, 1, 0, 0, 2450);
+        Check(v4.Created(1, 1, 0, 0, 2460, false, 1, 80, out _) && v4.Drain(2500).PerceivedMaxMs == 1460, "v4 reads a 1.46 s delay.");
+        var gated = new LootVisibilityTracker<int>(32, 256, 12, 5000, Table, 128, 1000, 1000);
+        gated.Destroyed(0, 0, 0, 1000, 100, 5, false, 4);
+        gated.Arrived(1, 1, 0, 0, 2450);
+        Check(!gated.Created(1, 1, 0, 0, 2460, false, 1, 80, out _), "Spawned 1.38 s after A broke: not A's drop.");
+        var summary = gated.Drain(2500);
+        Check(summary.SpawnMismatch == 1 && summary.SpawnGateRejected == 1 && summary.PerceivedCount == 0,
+            "Counted as a spawn mismatch, never timed.");
+
+        // A real delay stays measured: B observed, its drop arrives 3 s later; A is refused, B is timed.
+        gated.Destroyed(0, 0, 0, 3000, 100, 5, false, 4);
+        gated.Destroyed(1.5, 0, 0, 4400, 100, 5, false, 4);
+        gated.Arrived(2, 1, 0, 0, 7400);
+        Check(gated.Created(2, 1, 0, 0, 7410, false, 1, 7410 - 4380, out _), "The drop spawned 20 ms before B was seen here.");
+        summary = gated.Drain(7500);
+        Check(summary.PerceivedCount == 1 && summary.NetworkMaxMs == 3000 && summary.SpawnGateRejected == 1,
+            "A genuine 3 s network delay is reported against the right area.");
+        Check(summary.SpawnLagMinMs == -20 && summary.SpawnLagMaxMs == -20 && summary.Witnesses[0].SpawnLagMs == -20,
+            "The spawn lag of the timed match is exported for the tolerance check.");
+
+        // Owner: an old drop re-instantiated beside a fresh destruction is refused; an unstamped one is matched.
+        var owner = new LootVisibilityTracker<int>(32, 256, 12, 5000, Table, 128, 1000, 1000);
+        owner.Destroyed(0, 0, 0, 1000, 100, 5, owned: true, 4);
+        owner.Created(3, 1, 0, 0, 1010, true, 1, 60000, out bool old);
+        owner.Created(4, 1, 0, 0, 1010, true, 1, double.NaN, out bool fresh);
+        summary = owner.Drain(1100);
+        Check(!old && fresh && summary.OwnerSpawnMismatch == 1 && summary.OwnerInstantiateCount == 1 && summary.SpawnUnknown == 1,
+            "The stamp refuses the old drop; the unstamped one keeps the v4 rule and is counted as unknown.");
+        Check(double.IsNaN(owner.Drain(1200).SpawnLagMinMs), "No timed match: no lag range.");
     }
 
     private static LootVisibilityTracker<int> LookBack(int capacity = 128, double lookBack = 1000)

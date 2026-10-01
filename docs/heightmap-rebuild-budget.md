@@ -17,7 +17,8 @@ frame.
 
 ## Mechanism
 
-A Harmony prefix on `Heightmap.CustomLateUpdate`. On the first queued heightmap of a frame
+A Harmony prefix on `Heightmap.CustomLateUpdate` (and, for the enable-age gauges only, a
+postfix on `Heightmap.OnEnable`). On the first queued heightmap of a frame
 it plans over every heightmap in `Heightmap.Instances` whose `m_doLateUpdate` is 2:
 
 - **Critical, always run:** the heightmap square is within `RebuildCriticalRadius` of the
@@ -77,4 +78,30 @@ Per interval: `heightmap_budget_rebuilds_run`, `_deferred` (decisions, including
 `_demoted_measured`), `_overdue_forced`, `_critical`, `_budgeted`, `_planned_frames`,
 `_frames_over_budget` (measured spend above `RebuildBudgetMilliseconds`),
 `_max_deferral_ms`, `_frame_spend_max_ms`, `_plan_ms_max`, `_queue_peak`,
-`_cost_estimate_ms`, `_probe_failures`. Labels: `heightmap_budget_status`, `_enabled`, `_ms`.
+`_cost_estimate_ms`, `_probe_failures`. `_age_across_reload` and `_age_across_reload_max_ms` count rebuilds whose
+first-seen age spans an unload and re-enable of their zone (the age is not a deferral; 2026-09-30 read 33.8 s that
+way), kept out of `_max_deferral_ms`; needs the enable log. Labels: `heightmap_budget_status`, `_enabled`, `_ms`,
+`_critical_observer` (`installed`, `installed_without_enable_age`, `not_installed`).
+
+### Critical rebuilds (observation only)
+
+Every critical rebuild that ran, including frames with a single queued rebuild (not planned,
+so absent from `_critical`; counted in `_critical_unplanned`). Nothing here feeds the plan.
+Prefix `heightmap_budget_critical_`:
+
+- **Where:** `<bucket>_count`, `_ms_sum`, `_ms_max` per distance from the local player to the
+  heightmap square, in the critical test's own metric (larger per-axis gap, 0 on the square;
+  upper edges inclusive): `on_square`, `0_16`, `16_32`, `32_48`, `48_64`, `64_80`, `80_plus`.
+  Fixed steps whatever `RebuildCriticalRadius`; at the default 80 m, `80_plus` comes only from
+  the camera or distant-LOD clause.
+- **Pile-up:** `frames` (with a critical rebuild), `frame_count_max`, and the worst frame by
+  summed critical cost: `worst_frame_ms`, `worst_frame_count`.
+- **Which clause held:** `by_player`, `by_camera` (grass radius around the camera only),
+  `by_distant_lod`.
+- **Context:** `ctx_none`, `ctx_teleporting` (loading screen), `ctx_after_arrival` (the 10 s
+  window after a distant teleport), each `_count` and `_ms_sum`; needs teleport telemetry.
+- **Zone age:** time since the heightmap's last `OnEnable` (its zone loaded): `age_1s`,
+  `age_10s`, `age_older`, `age_unknown` (evicted from the 256-entry log), `_count` and `_ms_sum`.
+
+Not covered: whether the queuing `TerrainModifier` was created or destroyed (both use the same
+`PokeHeightmaps`). Terrain edits never reach this queue (`Poke(0)`/`Poke(1)`).

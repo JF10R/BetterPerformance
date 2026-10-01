@@ -22,7 +22,9 @@ collection can run on any allocating thread, so `gc_collect` collects from all t
 Counters export their latest value as `engine_counter_<name>`: `cpu_total_frame_time`, `cpu_main_thread_frame_time`,
 `cpu_render_thread_frame_time`, `gpu_frame_time`, `gc_used_memory`, `total_used_memory`, `gc_allocated_in_frame`,
 `gc_allocation_in_frame_count`, `draw_calls_count`, `batches_count`, `set_pass_calls_count`, `triangles_count`,
-`shadow_casters_count`, `visible_skinned_meshes_count`.
+`shadow_casters_count`, `visible_skinned_meshes_count`, and the graphics-memory counters `video_memory_bytes`,
+`render_textures_bytes`, `render_textures_count`, `used_buffers_bytes`, `used_buffers_count`
+(see [system-resource-telemetry.md](system-resource-telemetry.md)).
 
 Units come from the recorder's own `UnitType`, never from the metric name. Nanoseconds are converted to
 milliseconds; bytes and counts are exported unchanged. A metric with an undeclared unit is exported as `raw`.

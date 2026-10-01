@@ -42,7 +42,11 @@ namespace BetterPerformance.Core
         // Clutter and build-mode attribution probes. Appended at the end: histogram order is positional.
         ClutterGeneratePatches, ClutterGenerateVegPatch, BuildMenuOpen, PieceRemove, PieceCopy,
         // CharacterSaveToDisk phase attribution. Appended at the end: histogram order is positional.
-        CharacterSaveCloudChecks, CharacterSaveHash, CharacterSaveWrite, CharacterSaveReplace, CharacterSaveBackup
+        CharacterSaveCloudChecks, CharacterSaveHash, CharacterSaveWrite, CharacterSaveReplace, CharacterSaveBackup,
+        // Full character-save breakdown. Appended at the end: histogram order is positional.
+        CharacterSavePlayerData, CharacterSaveInventory, CharacterSaveSkills, CharacterSaveMapData,
+        CharacterSaveBuild, CharacterSaveGetArray, CharacterSaveOpen, CharacterSaveBufferWrite, CharacterSaveFinish,
+        CharacterSaveCatalogReload, CharacterSaveBackupCopy, CharacterSaveUnaccounted, CharacterSaveToDiskUnaccounted
     }
 
     [DataContract]

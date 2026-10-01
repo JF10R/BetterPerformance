@@ -37,5 +37,9 @@ Labels: `position_jump_sync_status`, `position_jump_send_enabled`, `position_jum
 
 ## Limits
 
-- The map icon lag seen by another player is the client delay plus the server delay plus the network. The receiving side is not measured.
+- The map icon lag seen by another player is the client delay plus the server delay plus the network, then the map's own glide (below).
 - Mixed installs are fine: an early send is an ordinary vanilla message, so a server without the module simply receives it sooner.
+
+## Map pins (0.4.20)
+
+`Minimap.UpdatePlayerPins` moves another player's pin toward the listed position at 200 m/s (`Vector3.MoveTowards`), so a pin needs 8 s after a 1.6 km portal and 20 s after 4 km, whatever the network did. `MinimapPlayerPinSnap`, `[Map] SnapPlayerPinsOnJumpEnabled` (client, opt-in), places the pin at once when it is farther than `PlayerPinJumpMeters` (default 64 m) from the listed position; walking keeps the native glide. Display only. Gauges `map_pin_snaps`, `map_pin_snap_distance_max_m`, `map_pin_snap_failures`; label `map_pin_snap_status`.

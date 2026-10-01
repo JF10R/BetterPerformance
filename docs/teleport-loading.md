@@ -53,17 +53,20 @@ A prefix on `Player.UpdateTeleport` (last among prefixes) checks the destination
 | Blocker | Cleared when |
 | --- | --- |
 | `active_area` | `ZoneSystem.IsActiveAreaLoaded` (every near-simulation zone exists; its heightmap is built synchronously on creation), counted only once `ZNet`'s reference position is within 32 m of the target: on the move frame it still points at the old area |
+| `server` | the destination position has been sent to the server during this teleport (`PositionJumpSync` sees every send, native or early, within 32 m of the target); without that hook, 2 s after the move (the native cadence). Label `fast_arrival_server_signal` |
 | `objects` | `ZNetScene.IsAreaReady(target)`: every received object of the 3×3 zones instantiated |
 | `floor` | `ZoneSystem.FindFloor(target)` |
 | `terrain` | no heightmap within `NearRadius` has a queued rebuild (`m_doLateUpdate` 1 or 2) |
 | `grass` | every grass patch `ClutterSystem.GeneratePatches` keeps around the player exists (one is generated per frame: ~80 patches, about 2 s at 40 FPS) |
 | `dungeon` | no dungeon still being sliced in (`DungeonSpawnSlicing`) |
-| `settling` | the number of objects in those 3×3 zones has not changed for `SettleSeconds` |
+| `settling` | the number of static objects (pieces, trees, rocks, locations) in those 3×3 zones has not changed for `SettleSeconds`, counted from 0.3 s after that send at the earliest; creatures, item drops, projectiles, ragdolls, fish and birds are ignored |
 | `minimum` | `MinimumSeconds` since entering the portal |
 
 Grass: when `grass` is the first unmet check (zones, objects, floor and terrain ready), the module sets `ClutterSystem.m_forceRebuild` once per teleport, the flag `ClearAll` uses. The next `LateUpdate` then builds every patch in one frame (~0.4-0.55 ms each on 2026-09-25, ~80 patches) under the loading screen instead of one per frame in play. Gauge `fast_arrival_grass_prebuilt`.
 
-`IsAreaReady` only covers objects already received: right after the move the server may not have sent the destination yet, which the 8 s floor used to hide. `settling` is the guard for that.
+`IsAreaReady` only covers objects already received: right after the move the server may not have sent the destination yet, which the 8 s floor used to hide. `server` and `settling` are the guard for that. Before 0.4.20 the settle clock started at the move, so a destination the server had not started streaming looked stable: on 2026-09-30 a 3.1 s portal (client on 0.4.18, no early position send) ended when the client had received about 500 new objects; about 2,900 more arrived in the next 5 s, and the house was missing meanwhile.
+
+Settle gauges: `fast_arrival_settle_change_<category>_<near|mid|far>` counts the checks, after the server could answer, in which that category's count changed within 32 m, 32-64 m or beyond of the target (what reset settling); `fast_arrival_settle_dynamic_ignored_ms` is the time the former all-object rule would still have held. After every distant arrival, fast or native, `fast_arrival_late_static_max`/`_sum` count the static objects that still arrived around the destination in the next 5 s (`fast_arrival_late_teleports`, `fast_arrival_late_over_100` for arrivals with 100 or more: the missing-house signature).
 
 Gauges: `fast_arrival_applied`, `fast_arrival_native_floor`, `fast_arrival_saved_ms_max`/`_sum`, `fast_arrival_failures`, `fast_arrival_wait_<blocker>_ms` (time each check held a teleport, applied or not) and `fast_arrival_held_by_<blocker>` for teleports that kept the floor (what was still loading at the last check). Keep ValheimPlus `disableEightSecondTeleport` off: it would end the teleport on `IsAreaReady` and `FindFloor` alone, before the terrain, grass and settle checks.
 
@@ -85,4 +88,4 @@ The object budget (`[ObjectLoading] Enabled`) no longer applies while the game c
 - `teleport_ready_wait_ms` large and `teleport_area_ready_ms` well under 8,000: the 8 s floor is what you wait for; fast arrival removes it once the checks above pass.
 - `teleport_area_ready_ms` near or past 8,000: loading is the limit. `teleport_active_area_ms` late points at terrain/zones; area ready late after it points at object creation or at the server sending the destination.
 
-Not measured: when the server's first destination ZDO arrives, and GPU work under the screen.
+Not measured: GPU work under the screen.

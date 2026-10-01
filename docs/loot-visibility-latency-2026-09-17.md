@@ -146,6 +146,27 @@ drops. Two causes, two fixes:
 Not covered: a drop whose object is created (t2) before its source's removal is classified then, and
 can still be paired with an earlier source.
 
+### Attribution v5: the drop's own spawn stamp (0.4.20)
+
+`loot_visibility_attribution=network_arrival_look_back_spawn_gate_v5`. On 2026-09-30 a remote client
+read 14 silver-vein drops at 1.3-4.8 s, each paired with a single area 0.6-2.8 m away, while the owner
+reported `owner_instantiate_max` of 1.4-4.7 s at the same moments. Distance alone cannot tell a
+drop timed against the area broken a hit earlier from a genuinely late drop that rolled away.
+`ItemDrop.Awake` stamps a new drop with the synced game time on its owner (`ZDOVars.s_spawnTime`),
+so a candidate now stays only if the drop spawned within 1 s of its t0 (`SpawnToleranceMs`):
+
+- every candidate refused: `loot_visibility_spawn_mismatch` (observer) or `..._owner_spawn_mismatch`
+  (owner; an old drop re-instantiated beside a fresh destruction lands here), never timed;
+- a late drop from the right source stays timed, with `lag=` (spawn minus t0, ms) in its witness and
+  `loot_visibility_spawn_lag_min`/`_max` over the timed matches, which check the tolerance against
+  the clock skew between clients;
+- `loot_visibility_spawn_gate_rejected` counts refused candidates, `loot_visibility_spawn_unknown`
+  drops with no stamp (logs; and the owner's own fresh drops, stamped just after `AddInstance`),
+  which keep the v4 rule.
+
+The look-back ring grows from 128 to 2,048 entries: every network arrival enters it, about 2,000 a
+second in play, and 2026-09-30 overwrote 26,000 eligible entries.
+
 ## Candidate, only after the split is measured
 
 Force-send a newly created `ItemDrop` ZDO to nearby peers, reusing the native

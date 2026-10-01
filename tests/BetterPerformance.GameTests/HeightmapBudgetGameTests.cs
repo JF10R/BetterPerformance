@@ -124,6 +124,8 @@ internal static class HeightmapBudgetGameTests
         MethodDefinition enable = Method(heightmap, "OnEnable");
         Check(Calls(enable, regenerate) && !enable.Body.Instructions.Any(i => (i.Operand as FieldReference)?.Resolve() == flag),
             "OnEnable regenerates directly and never queues");
+        Check(!enable.IsStatic && enable.ReturnType.FullName == "System.Void",
+            "OnEnable() is an instance void method, the enable-age observer's postfix target");
 
         // 6. The flushes that must still see a deferred rebuild as queued.
         MethodDefinition forceAll = Method(heightmap, "ForceGenerateAll");
@@ -157,6 +159,10 @@ internal static class HeightmapBudgetGameTests
             "BeforeLateUpdate is a static bool prefix (MonoBehaviour __instance, out long __state)");
         MethodDefinition after = module.Methods.Single(m => m.Name == "AfterLateUpdate");
         Check(after.IsStatic && after.ReturnType.FullName == "System.Void", "AfterLateUpdate is a void finalizer; it cannot swallow an exception");
+        MethodDefinition afterEnable = module.Methods.Single(m => m.Name == "AfterEnable");
+        Check(afterEnable.IsStatic && afterEnable.ReturnType.FullName == "System.Void" &&
+            afterEnable.Parameters.Select(p => p.ParameterType.FullName).SequenceEqual(new[] { "UnityEngine.MonoBehaviour" }),
+            "AfterEnable is a static void postfix (MonoBehaviour __instance)");
         Check(module.Methods.All(m => m.ReturnType.FullName != "Heightmap" && m.Parameters.All(p => p.ParameterType.FullName != "Heightmap")) &&
             module.Fields.All(f => !f.FieldType.FullName.Contains("Heightmap>") && f.FieldType.FullName != "Heightmap"),
             "no module signature or field names Heightmap (standalone CLR type-load limit)");
@@ -198,15 +204,26 @@ internal static class HeightmapBudgetGameTests
         var labels = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(text))!;
         reflected.GetMethod("Sample", PrivateStatic)!.Invoke(null, new object[] { gauges, labels });
         var exported = gauges.Cast<object>().Select(g => (string)number.GetProperty("Name")!.GetValue(g)!).ToList();
+        var critical = new List<string>();
+        foreach (string bucket in new[] { "on_square", "0_16", "16_32", "32_48", "48_64", "64_80", "80_plus" })
+            critical.AddRange(new[] { bucket + "_count", bucket + "_ms_sum", bucket + "_ms_max" });
+        critical.AddRange(new[] { "unplanned", "frames", "frame_count_max", "worst_frame_ms", "worst_frame_count",
+            "by_player", "by_camera", "by_distant_lod" });
+        foreach (string split in new[] { "ctx_none", "ctx_teleporting", "ctx_after_arrival", "age_1s", "age_10s", "age_older", "age_unknown" })
+            critical.AddRange(new[] { split + "_count", split + "_ms_sum" });
         Check(exported.SequenceEqual(new[] { "heightmap_budget_rebuilds_run", "heightmap_budget_deferred",
                 "heightmap_budget_demoted_measured", "heightmap_budget_overdue_forced", "heightmap_budget_critical",
                 "heightmap_budget_budgeted", "heightmap_budget_planned_frames", "heightmap_budget_frames_over_budget",
-                "heightmap_budget_max_deferral_ms", "heightmap_budget_frame_spend_max_ms", "heightmap_budget_plan_ms_max",
-                "heightmap_budget_queue_peak", "heightmap_budget_cost_estimate_ms", "heightmap_budget_probe_failures" }),
+                "heightmap_budget_max_deferral_ms", "heightmap_budget_age_across_reload", "heightmap_budget_age_across_reload_max_ms",
+                "heightmap_budget_frame_spend_max_ms", "heightmap_budget_plan_ms_max",
+                "heightmap_budget_queue_peak", "heightmap_budget_cost_estimate_ms", "heightmap_budget_probe_failures" }
+                .Concat(critical.Select(name => "heightmap_budget_critical_" + name))),
             "the gauge set is exactly the documented one (actual: " + string.Join(", ", exported) + ")");
         var labelNames = labels.Cast<object>().Select(l => (string)text.GetProperty("Name")!.GetValue(l)!).ToList();
-        Check(labelNames.SequenceEqual(new[] { "heightmap_budget_status", "heightmap_budget_enabled", "heightmap_budget_ms" }),
-            "the label set is exactly the documented one");
+        Check(labelNames.SequenceEqual(new[] { "heightmap_budget_status", "heightmap_budget_enabled", "heightmap_budget_ms",
+                "heightmap_budget_critical_observer" }), "the label set is exactly the documented one");
+        Check((string)text.GetProperty("Value")!.GetValue(labels[3])! == "not_installed",
+            "the critical observer reports not_installed when the module did not install");
 
         reflected.GetMethod("Uninstall", PrivateStatic)!.Invoke(null, null);
         Console.WriteLine("Heightmap rebuild budget: " + checks + " static game-contract checks from metadata; the deferral itself is verified in play.");

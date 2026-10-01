@@ -42,6 +42,26 @@ Export resets interval totals but preserves the preceding clock/frame observatio
 
 The inspected `SpawnSystem.UpdateSpawning` path requires both local ownership and a local player. A dedicated server can therefore show zero spawn-list activity while a client executes spawn work. Zero on one process is not proof that world spawning stopped. Some spawning occurs outside these two methods, and neither method's call count proves how many entities reached an interactive state.
 
+### Spawn species and refusals
+
+`SpawnTelemetry` counts native spawn outcomes per prefab on the process that runs `UpdateSpawning` (zone owner with a local player; a dedicated server exports zeros). Observers are void prefixes, postfixes and finalizers; none skips a method or changes a result.
+
+| Gauge suffix | Native decision point | Meaning |
+| --- | --- | --- |
+| `creatures_day`, `creatures_night` | `Spawn` prefix, `EnvMan.IsNight()` | Natural-list creatures (one per group member), split by the time-of-day flag at spawn |
+| `creatures_event` | `Spawn` prefix, `eventSpawner` | Random-event creatures |
+| `cap_refused` | `GetNrOfZDOInstances` minus capped `FindBaseSpawnPoint` | `m_maxSpawned` reached; exact because no call sits between the two in `UpdateSpawnList` (asserted by the contract test) |
+| `point_searches`, `point_search_failed` | `FindBaseSpawnPoint` | Searches (20 tries each) and searches that found no valid point |
+| `points_rejected` | `IsSpawnPointGood` false | Candidate points rejected, including group placement |
+| `points_in_player_base_area` | `EffectArea.IsPointInsideArea(PlayerBase)` non-null inside `IsSpawnPointGood` | Rejected by the PlayerBase check; that check runs after biome, blocked, altitude, tilt, center distance and player distance, so a point failing earlier is not counted here |
+| `crowded_refused` | `HaveInstanceInRange` true | Another instance closer than `m_spawnDistance` |
+
+Totals are exported as `spawn_<suffix>` every interval, zero included. Per-prefab rows are `spawn_by_prefab_<name>_<suffix>`, non-zero only: 32 named prefabs per capture, the 12 busiest per interval, the rest in `other`. Refusals by chance roll, interval, biome, global key, environment and day/night are not observable without hooking widely used statics; an entry with zero cap checks and zero point searches was stopped by one of them. To read those gates, `spawn_table_mountain` (once per capture, and in the BepInEx log once per world) lists every Mountain entry of `SpawnSystem.m_spawnLists` with its time, environment, key, cap, interval, chance, group, `m_insidePlayerBase`, altitude and radius; `spawn_environment` gives the environment at export. Alt-biome and event spawn lists are not in the table.
+
+Which prefabs carry a PlayerBase area is asset data, not code. ValheimPlus resizes the PlayerBase collider of crafting stations to `workbenchEnemySpawnRange`, or `workbenchRange` when that is 0.
+
+Prefab names are read once per prefab; hooks key a bounded reference map and allocate nothing per call once warm. The `IsPointInsideArea` postfix runs for every caller and returns after one static compare unless a spawn point check is in progress. Each hook has its own status label (`spawn_*_probe_status`); `cap_refused` needs the list and search hooks, the PlayerBase count needs the point hook. Cost is bounded by design, not measured.
+
 ### Cost and compatibility limits
 
 Cadence state consists of fixed numeric fields; it has no growing history or retained NPC references. Path-result observation increments two counters. Histograms use the existing bounded `MetricBook`. The collector adds a fixed set of aggregate fields at export, not a log line per NPC or path query. This is a bounded design, not a claim of measured zero overhead.
@@ -51,5 +71,7 @@ The hooks preserve arguments, return values and native exceptions. Signature val
 ### Verification scope
 
 `AiCadenceTests.Run` covers wall time versus supplied `dt`, same-frame repetition, source/scratch counts, cross-export continuity, invalid/regressing observations, independent snapshots and capture reset. These synthetic tests do not establish AI behavior or spawn success.
+
+`SpawnTallyTests.Run` covers slot bounds, `other` folding, the cap derivation and gauge-key sanitizing. `SpawnGameTests.Run` reads the seven hook signatures, the `SpawnData` fields and the call order from metadata and checks every observer is void with no by-ref result; a standalone CLR cannot load `SpawnSystem`, so installation itself is proven only in Unity.
 
 `AiGameTests.Run` checks the installed game signatures, installs/removes the cadence and path-result hooks in a standalone process, and exercises the inactive path-result hook. It does not invoke the game methods or the cadence prefix: that prefix references native Unity `Time`, whose internal calls cannot execute in standalone CLR. The helper passed against both local client and dedicated-server assemblies; their reference builds also compiled without warnings. Separately authorized isolated runtime validation must report its own results.

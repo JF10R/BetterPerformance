@@ -89,7 +89,14 @@ namespace BetterPerformance
             new Probe("SetPass Calls Count", ProbeKind.Counter, renderingOnly: true),
             new Probe("Triangles Count", ProbeKind.Counter, renderingOnly: true),
             new Probe("Shadow Casters Count", ProbeKind.Counter, renderingOnly: true),
-            new Probe("Visible Skinned Meshes Count", ProbeKind.Counter, renderingOnly: true)
+            new Probe("Visible Skinned Meshes Count", ProbeKind.Counter, renderingOnly: true),
+            // Graphics memory as the release player exposes it; the "Gfx Used/Reserved Memory",
+            // "Texture Memory" and "Mesh Memory" names are absent from the shipped UnityPlayer.dll.
+            new Probe("Video Memory Bytes", ProbeKind.Counter, renderingOnly: true),
+            new Probe("Render Textures Bytes", ProbeKind.Counter, renderingOnly: true),
+            new Probe("Render Textures Count", ProbeKind.Counter, renderingOnly: true),
+            new Probe("Used Buffers Bytes", ProbeKind.Counter, renderingOnly: true),
+            new Probe("Used Buffers Count", ProbeKind.Counter, renderingOnly: true)
         };
 
         private static readonly FrameStepWindow Window = new FrameStepWindow();

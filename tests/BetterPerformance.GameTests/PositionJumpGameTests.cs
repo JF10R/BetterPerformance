@@ -79,7 +79,26 @@ internal static class PositionJumpGameTests
             Calls(Method(graphics, "RequestTargetFrameRateFromPreset"), "PresentManager", "RequestTargetFrameRate"),
             "the requested frame rate follows the Background graphics mode");
 
-        // 5. The pure policy.
+        // 5. MinimapPlayerPinSnap (0.4.20): the pin glides at 200 m/s toward the listed position, pins and players
+        // are paired by index in two private lists, and a moved pin sets m_pinUpdateRequired.
+        TypeDefinition minimap = Require("Minimap");
+        MethodDefinition pins = Method(minimap, "UpdatePlayerPins", "System.Single");
+        Check(!pins.IsStatic && pins.ReturnType.FullName == "System.Void" && Calls(pins, "Vector3", "MoveTowards") && LoadsFloat(pins, 200f),
+            "UpdatePlayerPins still glides pins with Vector3.MoveTowards at 200 m/s");
+        Check(Reads(pins, "m_playerPins") && Reads(pins, "m_tempPlayerInfo") && Stores(pins, "m_pinUpdateRequired"),
+            "UpdatePlayerPins pairs m_playerPins with m_tempPlayerInfo and sets m_pinUpdateRequired");
+        Check(minimap.Fields.Any(f => f.Name == "m_playerPins" && !f.IsStatic && f.FieldType.FullName == "System.Collections.Generic.List`1<Minimap/PinData>") &&
+            minimap.Fields.Any(f => f.Name == "m_tempPlayerInfo" && !f.IsStatic && f.FieldType.FullName == "System.Collections.Generic.List`1<ZNet/PlayerInfo>") &&
+            minimap.Fields.Any(f => f.Name == "m_pinUpdateRequired" && !f.IsStatic && f.FieldType.FullName == "System.Boolean"),
+            "Minimap.m_playerPins, m_tempPlayerInfo and m_pinUpdateRequired keep their types");
+        TypeDefinition pinData = minimap.NestedTypes.Single(t => t.Name == "PinData"), playerInfo = net.NestedTypes.Single(t => t.Name == "PlayerInfo");
+        Check(pinData.Fields.Any(f => f.Name == "m_pos" && f.IsPublic && f.FieldType.FullName == Vector3) &&
+            pinData.Fields.Any(f => f.Name == "m_name" && f.IsPublic && f.FieldType.FullName == "System.String") &&
+            playerInfo.Fields.Any(f => f.Name == "m_position" && f.IsPublic && f.FieldType.FullName == Vector3) &&
+            playerInfo.Fields.Any(f => f.Name == "m_name" && f.IsPublic && f.FieldType.FullName == "System.String"),
+            "PinData.m_pos/m_name and PlayerInfo.m_position/m_name are public");
+
+        // 6. The pure policy.
         Type policy = plugin.GetType("BetterPerformance.Core.PositionJumpPolicy", true)!;
         var isJump = policy.GetMethod("IsJump", BindingFlags.Public | BindingFlags.Static)!;
         Check((bool)isJump.Invoke(null, new object[] { 3000.0, 64.0 })! && !(bool)isJump.Invoke(null, new object[] { 10.0, 64.0 })!, "a portal is a jump, walking is not");

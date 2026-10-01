@@ -38,6 +38,10 @@ namespace BetterPerformance
         internal static bool SendEnabled => Installed && sendOption != null && sendOption.Value;
         internal static bool RelayEnabled => Installed && relayOption != null && relayOption.Value;
         internal static string Status { get; private set; } = "disabled";
+        // Client: when (Stopwatch seconds) and where the last reference position went to the server,
+        // native or early; FastTeleportArrival waits for the destination to have been sent. NaN: none yet.
+        internal static double LastSentAt { get; private set; } = double.NaN;
+        internal static Vector3 LastSentPosition => lastSent;
         private static double Now => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
         private static double Threshold => jumpMeters == null ? PositionJumpPolicy.DefaultJumpMeters : jumpMeters.Value;
 
@@ -91,6 +95,7 @@ namespace BetterPerformance
                 double now = Now;
                 sends++;
                 lastSent = __instance.GetReferencePosition();
+                LastSentAt = now;
                 hasSent = true;
                 if (!double.IsNaN(clientJumpAt))
                 {
@@ -155,7 +160,7 @@ namespace BetterPerformance
         {
             if (!Installed) return;
             ZNet net = ZNet.instance;
-            if (net == null) { hasSent = false; relayPending = false; clientJumpAt = serverJumpAt = double.NaN; return; }
+            if (net == null) { hasSent = false; relayPending = false; clientJumpAt = serverJumpAt = LastSentAt = double.NaN; return; }
             try
             {
                 double now = Now;
@@ -235,7 +240,7 @@ namespace BetterPerformance
             Status = "disabled";
             sendPosition = null; sendPlayerList = null; peerOf = null;
             hasSent = relayPending = false;
-            clientJumpAt = serverJumpAt = lastEarly = lastRelay = double.NaN;
+            clientJumpAt = serverJumpAt = lastEarly = lastRelay = LastSentAt = double.NaN;
             Reset();
         }
     }

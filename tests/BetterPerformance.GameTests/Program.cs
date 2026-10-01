@@ -276,6 +276,7 @@ void Module(string name, Action run)
     }
 }
 Module("Ai", () => AiGameTests.Run(game, plugin));
+Module("Spawn", () => SpawnGameTests.Run(game, plugin));
 Module("FastMapSerialization", () => FastMapSerializationTests.Run(game, plugin));
 Module("PackageCopy", () => PackageCopyGameTests.Run(game, plugin));
 Module("MapCompressionCache", () => MapCompressionCacheGameTests.Run(game, plugin));
@@ -289,6 +290,7 @@ Module("Ownership", () => OwnershipGameTests.Run(game, plugin));
 Module("OwnershipExpedite", () => OwnershipExpediteGameTests.Run(game, plugin));
 Module("SectorInvalidation", () => SectorInvalidationGameTests.Run(game, plugin));
 Module("HostNet", () => HostNetGameTests.Run(game, plugin));
+Module("SystemResource", () => SystemResourceGameTests.Run(game, plugin, managedDirectory));
 Module("NetworkFlow", () => NetworkFlowGameTests.Run(game, plugin));
 Module("NetworkCompression", () => NetworkCompressionGameTests.Run(game, plugin));
 Module("CaptureRelay", () => CaptureRelayGameTests.Run(game, plugin));

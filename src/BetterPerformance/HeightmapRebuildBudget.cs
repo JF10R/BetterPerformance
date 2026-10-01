@@ -34,8 +34,16 @@ namespace BetterPerformance
         private static int plannedFrame = -1, optionalRan;
         private static double frameSpentMs, allowanceMs = double.MaxValue, costEstimateMs = InitialCostMs;
         private static long rebuildsRun, deferred, demoted, overdue, critical, budgeted, plannedFrames, framesOverBudget, failures;
-        private static double maxDeferralMs, frameSpentMaxMs, planMsMax;
+        private static double maxDeferralMs, frameSpentMaxMs, planMsMax, acrossReloadMaxMs;
+        private static long acrossReload;
         private static int queuePeak;
+        // Observer of the critical rebuilds (where, cost, context); read-only beside the plan.
+        private static readonly HeightmapCriticalProfile CriticalProfile = new HeightmapCriticalProfile();
+        private static readonly HeightmapEnableLog Enables = new HeightmapEnableLog();
+        private static float[] gaps = new float[64];
+        private static HeightmapCriticalClause[] clauses = new HeightmapCriticalClause[64];
+        private static HeightmapRebuildContext frameContext;
+        private static bool framePlanned, enableLogInstalled;
 
         internal static bool Installed { get; private set; }
         internal static bool Enabled { get; private set; }
@@ -46,6 +54,9 @@ namespace BetterPerformance
             internal long First;
             internal int Frame;
             internal bool Run, Optional, Ran;
+            internal bool Critical;
+            internal float PlayerGapM;
+            internal HeightmapCriticalClause Clause;
         }
 
         internal static void Install(ConfigFile config, ManualLogSource logger)
@@ -91,7 +102,27 @@ namespace BetterPerformance
                 Installed = Enabled = false;
                 Status = "patch_failed";
                 logger.LogWarning("Heightmap rebuild budget could not patch Heightmap.CustomLateUpdate: " + exception.GetType().Name);
+                return;
             }
+            // Observation only, separate: losing it costs the enable-age gauges, never the budget.
+            try
+            {
+                Type heightmap = lateUpdate.DeclaringType;
+                MethodInfo enable = AccessTools.DeclaredMethod(heightmap, "OnEnable", Type.EmptyTypes)
+                    ?? throw new InvalidOperationException("Heightmap.OnEnable is missing.");
+                Patches.Patch(enable, postfix: new HarmonyMethod(typeof(HeightmapRebuildBudget), nameof(AfterEnable)));
+                enableLogInstalled = true;
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning("Heightmap rebuild budget: enable-age observation unavailable: " + exception.GetType().Name);
+            }
+        }
+
+        private static void AfterEnable(MonoBehaviour __instance)
+        {
+            try { Enables.Note(__instance.GetInstanceID(), Stopwatch.GetTimestamp()); }
+            catch { failures++; }
         }
 
         // Every member the hooks read is resolved here, so an unsupported layout leaves the
@@ -168,7 +199,14 @@ namespace BetterPerformance
                 frameSpentMs += elapsed;
                 if (elapsed >= 0 && elapsed < 1000) costEstimateMs = Math.Max(0.1, costEstimateMs + 0.2 * (elapsed - costEstimateMs));
                 int id = __instance.GetInstanceID();
-                if (entries.TryGetValue(id, out Entry entry)) { entry.Ran = true; entries[id] = entry; }
+                if (!entries.TryGetValue(id, out Entry entry)) return;
+                entry.Ran = true;
+                entries[id] = entry;
+                if (!entry.Critical || entry.Frame != plannedFrame) return;
+                long now = Stopwatch.GetTimestamp();
+                bool exact = false;
+                double age = enableLogInstalled ? Enables.AgeMs(id, now, Stopwatch.Frequency, out exact) : double.NaN;
+                CriticalProfile.Observe(plannedFrame, entry.PlayerGapM, elapsed, entry.Clause, frameContext, age, exact, framePlanned);
             }
             catch { failures++; }
         }
@@ -181,6 +219,7 @@ namespace BetterPerformance
             frameSpentMs = 0;
             optionalRan = 0;
             allowanceMs = double.MaxValue;
+            framePlanned = false;
             long started = Stopwatch.GetTimestamp();
             spare.Clear();
             Camera camera = Utils.GetMainCamera();
@@ -198,6 +237,13 @@ namespace BetterPerformance
             // is queued; those stay critical so a deferral never stalls grass.
             ClutterSystem clutter = ClutterSystem.instance;
             float eyeRadius = clutter != null ? Math.Max(radius, clutter.m_distance + 1f) : radius;
+            // Observation only; it must never abort the plan.
+            try
+            {
+                frameContext = TeleportLoadingTelemetry.Teleporting ? HeightmapRebuildContext.Teleporting
+                    : TeleportLoadingTelemetry.AfterArrival ? HeightmapRebuildContext.AfterArrival : HeightmapRebuildContext.None;
+            }
+            catch { frameContext = HeightmapRebuildContext.None; }
             List<IMonoUpdater> all = Heightmap.Instances;
             int count = 0;
             for (int i = 0; i < all.Count; i++)
@@ -222,12 +268,19 @@ namespace BetterPerformance
                     Critical = map.IsDistantLod || map.IsPointInside(anchor, radius) || map.IsPointInside(eye, eyeRadius),
                 };
                 firstSeen[count] = first;
-                spare[id] = new Entry { First = first, Frame = frame, Run = true };
+                // Observation only, after the decision above: which clause held, and the player's
+                // distance to the square in the test's own metric (per-axis gap, 0 on the square).
+                bool isCritical = candidates[count].Critical;
+                clauses[count] = !isCritical || map.IsDistantLod ? HeightmapCriticalClause.DistantLod // unread unless critical
+                    : map.IsPointInside(anchor, radius) ? HeightmapCriticalClause.Player : HeightmapCriticalClause.Camera;
+                gaps[count] = Math.Max(Math.Max(0, Math.Abs(centre.x - anchor.x) - half), Math.Max(0, Math.Abs(centre.z - anchor.z) - half));
+                spare[id] = new Entry { First = first, Frame = frame, Run = true, Critical = isCritical, PlayerGapM = gaps[count], Clause = clauses[count] };
                 count++;
             }
             Swap();
             if (count > queuePeak) queuePeak = count;
             if (count < 2) return; // Nothing to order: vanilla runs it.
+            framePlanned = true;
             var plan = HeightmapRebuildPlanner.Plan(candidates, count, order, new HeightmapRebuildSettings
             {
                 BudgetMs = budgetMs?.Value ?? 4f,
@@ -245,8 +298,11 @@ namespace BetterPerformance
                     Frame = frame,
                     Run = candidate.Run,
                     Optional = candidate.Reason == HeightmapRebuildReason.Budget,
+                    Critical = candidate.Critical,
+                    PlayerGapM = gaps[i],
+                    Clause = clauses[i],
                 };
-                if (candidate.Run && candidate.AgeMs > maxDeferralMs) maxDeferralMs = candidate.AgeMs;
+                if (candidate.Run && candidate.AgeMs > maxDeferralMs) RecordDeferral(candidate.Id, candidate.AgeMs, started);
             }
             critical += plan.Critical;
             overdue += plan.Overdue;
@@ -255,6 +311,23 @@ namespace BetterPerformance
             plannedFrames++;
             double planMs = (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
             if (planMs > planMsMax) planMsMax = planMs;
+        }
+
+        // Observation only. A heightmap queued, then unloaded with its zone and enabled again keeps its first-seen
+        // time, so its age spans the unload (2026-09-30: 33.8 s and 13.3 s, both forced at once on return).
+        // Those ages are reported apart instead of as a deferral.
+        private static void RecordDeferral(int id, double ageMs, long now)
+        {
+            double enabledMs = double.NaN;
+            bool exact = false;
+            if (enableLogInstalled) enabledMs = Enables.AgeMs(id, now, Stopwatch.Frequency, out exact);
+            if (exact && enabledMs < ageMs)
+            {
+                acrossReload++;
+                if (ageMs > acrossReloadMaxMs) acrossReloadMaxMs = ageMs;
+                return;
+            }
+            maxDeferralMs = ageMs;
         }
 
         private static void Swap()
@@ -270,6 +343,8 @@ namespace BetterPerformance
             Array.Resize(ref candidates, candidates.Length * 2);
             Array.Resize(ref firstSeen, firstSeen.Length * 2);
             Array.Resize(ref order, order.Length * 2);
+            Array.Resize(ref gaps, gaps.Length * 2);
+            Array.Resize(ref clauses, clauses.Length * 2);
         }
 
         // Main-thread runtime toggle. Off, every queued rebuild runs on its next late update.
@@ -290,16 +365,21 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("heightmap_budget_planned_frames", Take(ref plannedFrames), "frames"));
             gauges.Add(new NumberValue("heightmap_budget_frames_over_budget", Take(ref framesOverBudget), "frames"));
             gauges.Add(new NumberValue("heightmap_budget_max_deferral_ms", Math.Round(maxDeferralMs, 3), "ms"));
+            gauges.Add(new NumberValue("heightmap_budget_age_across_reload", Take(ref acrossReload), "rebuilds"));
+            gauges.Add(new NumberValue("heightmap_budget_age_across_reload_max_ms", Math.Round(acrossReloadMaxMs, 3), "ms"));
             gauges.Add(new NumberValue("heightmap_budget_frame_spend_max_ms", Math.Round(frameSpentMaxMs, 3), "ms"));
             gauges.Add(new NumberValue("heightmap_budget_plan_ms_max", Math.Round(planMsMax, 3), "ms"));
             gauges.Add(new NumberValue("heightmap_budget_queue_peak", queuePeak, "heightmaps"));
             gauges.Add(new NumberValue("heightmap_budget_cost_estimate_ms", Math.Round(costEstimateMs, 3), "ms"));
             gauges.Add(new NumberValue("heightmap_budget_probe_failures", Take(ref failures), "calls"));
-            maxDeferralMs = frameSpentMaxMs = planMsMax = 0;
+            maxDeferralMs = frameSpentMaxMs = planMsMax = acrossReloadMaxMs = 0;
             queuePeak = 0;
+            CriticalProfile.Sample(gauges);
             labels.Add(new TextValue("heightmap_budget_status", Status));
             labels.Add(new TextValue("heightmap_budget_enabled", Enabled ? "true" : "false"));
             labels.Add(new TextValue("heightmap_budget_ms", (budgetMs?.Value ?? 0f).ToString(CultureInfo.InvariantCulture)));
+            labels.Add(new TextValue("heightmap_budget_critical_observer",
+                !Installed ? "not_installed" : enableLogInstalled ? "installed" : "installed_without_enable_age"));
         }
 
         private static long Take(ref long counter)
@@ -311,15 +391,18 @@ namespace BetterPerformance
 
         internal static void Reset()
         {
-            rebuildsRun = deferred = demoted = overdue = critical = budgeted = plannedFrames = framesOverBudget = failures = 0;
-            maxDeferralMs = frameSpentMaxMs = planMsMax = 0;
+            rebuildsRun = deferred = demoted = overdue = critical = budgeted = plannedFrames = framesOverBudget = failures = acrossReload = 0;
+            maxDeferralMs = frameSpentMaxMs = planMsMax = acrossReloadMaxMs = 0;
             queuePeak = 0;
+            CriticalProfile.Reset();
         }
 
         internal static void Uninstall()
         {
             Installed = Enabled = false;
             Status = "disabled";
+            enableLogInstalled = false;
+            Enables.Clear();
             entries.Clear();
             spare.Clear();
             plannedFrame = -1;
