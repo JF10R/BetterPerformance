@@ -38,15 +38,15 @@ For each affected module, in this order:
 Never validate on a real character or world. The isolated runner copies the game into `.qa/runs/<id>/`, generates a `bp_test_` world, uses a temporary character, verifies by hash that every real save file is unchanged, and restores preferences:
 
 ```powershell
-pwsh -File .qa/run.ps1 -Version <ver> -MaxRuns 1 -TestVariant fast_join_production
+pwsh -File .qa/run.ps1 -Version <ver> -MaxRuns 1 -TestVariant fast_join_production -WithoutBetterNetworking
 ```
 
-Then read the captures with `scripts/summarize_capture.py` and confirm: `probe_failures_total` = 0, `writer_dropped_records_total` = 0, every module status `installed`/`enabled`, and the module-specific counters listed in the latest `docs/validation-*.md`. Modules that the headless workload cannot exercise (cloud writes, world-map generation, terrain operations, second-player ownership) keep their "unproven at runtime" note and are watched in the first real session through their `*_status` and `*_result` labels.
+Then read the captures with `scripts/summarize_capture.py` and confirm: `probe_failures_total` = 0, `writer_dropped_records_total` = 0, every module status `installed`/`enabled`, and the module-specific counters listed in the latest validation record. The isolated client has no graphics device: GPU and video-memory readings stay `headless` there. Modules that the headless workload cannot exercise (cloud writes, world-map generation, terrain operations, second-player ownership) keep their "unproven at runtime" note and are watched in the first real session through their `*_status` and `*_result` labels.
 
 ### 5. Deploy and record
 
 - Run `.qa/deploy.ps1 -Version <ver> -ValidatedRun <run root>` (local tooling, not tracked): it refuses if a game runs, if the DLL version or hash differs from the validated run, or if a run marker is missing; it backs up DLLs and configs first. Add any new config key to its settings table before deploying.
-- Bump `PluginVersion` and the csproj `<Version>`, add the CHANGELOG entry, and write `docs/validation-<version>.md` with the game version, assembly hash, gate results and what stayed unproven.
+- Bump `PluginVersion` and the csproj `<Version>`, add the CHANGELOG entry, and write the validation record (kept outside the repository, like session reports) with the game version, assembly hash, gate results and what stayed unproven.
 - Rollback: the deployment backup directory under `.qa/deployment-backups/` holds the previous DLL and config for each role.
 
 ### 6. Known update-sensitive points
@@ -66,6 +66,12 @@ Then read the captures with `scripts/summarize_capture.py` and confirm: `probe_f
 | Loading details | Which subpaths `AltBiomeWorldData.VerifyBiomeData` calls | `LoadingDetailsTelemetry.cs` |
 | Biome point cache | `AltBiomeWorldData.GenerateBiomePoints`, `Save`/`Load`, `m_world`; any `WorldGenerator` change re-keys the cache by design | `BiomePointCache.cs` |
 | Loot visibility | `MineRock5.RPC_SetAreaHealth`, the private `ZDOMan.CreateNewZDO(ZDOID, Vector3, int)` and its zero-hash arrival call site; the drop-before-destroy order of `Destructible.Destroy`, `TreeBase.RPC_Damage` (`SpawnLog`) and `MineRock.RPC_Hit` (`RPC_Hide`) | `LootVisibilityTelemetry.cs` |
+| Fast portal arrival | `Player.UpdateTeleport` timer and `m_teleport*` fields, `ZNetScene.IsAreaReady`, `ZoneSystem.FindFloor`/`IsActiveAreaLoaded`, `ClutterSystem` patch fields | `FastTeleportArrival.cs`, `TeleportZonePreparation.cs` |
+| Position jump sync, map pins | `ZNet.SendServerSyncPlayerData`/`SendPlayerList`/`RPC_ServerSyncedPlayerData`; `Minimap.UpdatePlayerPins` (200 m/s `MoveTowards`, `m_playerPins`, `m_tempPlayerInfo`) | `PositionJumpSync.cs`, `MinimapPlayerPinSnap.cs` |
+| Character save phases | The call order inside `PlayerProfile.SavePlayerToDisk` (pinned from IL; the derived gap timings rely on it) | `CharacterSaveDiskTelemetry.cs` |
+| Heightmap rebuild budget | `Heightmap.CustomLateUpdate`, `m_doLateUpdate`, `Heightmap.Instances`, `OnEnable` | `HeightmapRebuildBudget.cs` |
+| Spawn telemetry | `SpawnSystem.UpdateSpawnList`/`Spawn`/`FindBaseSpawnPoint`/`IsSpawnPointGood`, `SpawnSystem.GetNrOfZDOInstances`/`HaveInstanceInRange`, `EffectArea.IsPointInsideArea` | `SpawnTelemetry.cs` |
+| System resources | Which Unity memory counters `UnityPlayer.dll` exposes (`Gfx Used Memory` and `Texture Memory` are absent in 1.0.16) | `SystemTelemetry.cs`, `EngineTelemetry.cs` |
 
 A pinned raw-IL hash is the most update-fragile contract there is: the bytes include
 metadata tokens, which renumber whenever anything else in the assembly changes. Pin

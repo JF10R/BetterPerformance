@@ -2,7 +2,7 @@
 
 Performance diagnostics and experimental, measurable optimizations for Valheim clients and dedicated servers.
 
-**Status: experimental plugin, version 0.4.15, verified against Valheim 1.0.15 (2026-09-23). Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
+**Status: experimental plugin, version 0.4.20, verified against Valheim 1.0.16 (2026-10-01). Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
 
 ### TL;DR: what it improves and who benefits
 
@@ -24,6 +24,14 @@ Diagnostics are always on. Each optimization is one switch, off by default, and 
 | Network: packet compression | `Network.CompressionEnabled` | Replaces BetterNetworking's compression: framed Deflate to peers on the same plugin version, negotiated per connection | Every peer that should receive compressed data | No, both ends need the plugin; others stay vanilla | Mechanism verified; ratio measured on the test world only |
 | Diagnostics: capture relay | `Relay.SendCapturesEnabled`, `Relay.SendLogEnabled`, `Relay.AcceptEnabled` | The server collects the other players' captures (and, if they opt in, their BepInEx log) under `captures/remote` as they play; about 16 KB/s per client, sent only while the link is idle | Sending clients and the server | Not a gameplay change; a vanilla server just ignores the offer | Mirror proven byte-identical offline; live cost measured on the test world only |
 | Network: teleport ghost fix | `Replication.SectorInvalidationFixEnabled` | A player who goes through a portal disappears at once on everyone else's screen instead of standing frozen in the portal until they cross another 64 m zone; same for any object that jumps out of a player's area | Server | Yes, no client mod needed | Mechanism verified in the game code; runtime unmeasured |
+| Portals: fast arrival | `Teleport.FastArrivalEnabled` | A portal ends once the destination is loaded and the server has streamed it (3-6 s) instead of the fixed 8 s | Your client | No | Measured in play |
+| Portals: destination preparation | `Teleport.PrefetchTerrainEnabled`, `ZoneBurstEnabled` | The destination's terrain and zones are built during the fade and under the loading screen instead of after | Your client | No | Measured in play |
+| Portals: position sent at once | `Teleport.SendPositionOnJumpEnabled` (client), `RelayPlayerListOnJumpEnabled` (server) | The server streams the destination and relays the player list right after a portal instead of within 2 s | Client and server | The relay helps everyone's map | Measured in play |
+| Map: player pins follow portals | `Map.SnapPlayerPinsOnJumpEnabled` | Another player's map pin jumps with them instead of gliding at 200 m/s (8 s for 1.6 km) | Your client | No | Mechanism verified in the game code |
+| Memory: hourly asset unload out of play | `Memory.DeferHourlyAssetUnloadEnabled` | The game's hourly unload (170-330 ms freeze) moves to sleep, respawn, portal screens or an empty server | Client and server | No | Measured in play |
+| Terrain: rebuild budget | `Terrain.RebuildBudgetEnabled` | Far terrain rebuilds are spread over frames; near ones still run at once | Your client | No | Measured in play |
+| Terrain: paint-only reload | `Terrain.PaintOnlyReloadEnabled` | Another player's hoe or cultivator edit refreshes only the paint instead of rebuilding the terrain meshes | Your client | No | Measured in play |
+| Server: idle zone pre-generation | `ServerGeneration.IdlePregenerationEnabled` | While nobody is connected, the server generates the zones around recent play so exploring does not | Server | Yes | Measured on the server |
 
 Nothing here changes world saves, ownership rules, item duplication guards, the wire format or combat outcomes. Details and sources: the roadmap, the 0.4.5 validation and the [game update guide](docs/game-update-guide.md).
 
@@ -46,6 +54,7 @@ The initial focus is measuring a client and dedicated server running on the same
 - Passive client loading timelines and inclusive world-generation/terrain stages; distinguish observed wall loading from native game-time spawn messages. See [loading telemetry](docs/loading-telemetry.md), loading research and the data-safety audit.
 - Base-simulation, terrain and generation timings (structural wear/support, heightmap rebuilds, terrain operations, crop/station ticks, location and dungeon spawns) with population counts; see [base simulation telemetry](docs/base-simulation-telemetry.md).
 - Per-name attribution of object creation cost, serialized replication bytes and routed RPC dispatch, bounded top-N per export; see [attribution telemetry](docs/attribution-telemetry.md).
+- Portal timelines and the 10 s after arrival, frame pacing, character save phases, critical terrain rebuilds, spawns per species with refusals, and system resources (video memory against its budget, RAM, CPU load and clock, power, uptime); see [teleport loading](docs/teleport-loading.md), [AI cadence, pathfinding and spawn observations](docs/ai-telemetry.md) and [system resource telemetry](docs/system-resource-telemetry.md).
 - Unity engine markers and counters through `ProfilerRecorder` (present/render-thread waits, GC pauses, frame times, draw calls), fixed-step accounting and GC mode; see [engine telemetry](docs/engine-telemetry.md).
 - Read-only host facts (priority, affinity, timer resolution, power scheme, shared performance counter), Steam transport path (direct or relayed), online backend, ownership and replication counters; see [host and network telemetry](docs/host-network-telemetry.md).
 - A Python report command for comparing captures without changing gameplay, persistence or networking settings.
@@ -89,6 +98,12 @@ Project documentation only: guides, each optimization module, and each telemetry
 - [Network flow: adaptive send window and rate policy](docs/network-flow.md)
 - [Network compression](docs/network-compression.md)
 - [Capture relay: client captures and logs mirrored to the server](docs/capture-relay.md)
+- [Teleport loading and fast portal arrival](docs/teleport-loading.md)
+- [Position jump sync and map pins](docs/position-jump-sync.md)
+- [Hourly asset unload deferral](docs/asset-unload-deferral.md)
+- [Heightmap rebuild budget](docs/heightmap-rebuild-budget.md)
+- [Terrain paint-only reload](docs/terrain-paint-only-reload.md)
+- [Idle zone pre-generation](docs/idle-zone-pregeneration.md)
 - [Smelter: catch-up telemetry (and the removed catch-up budget)](docs/smelter-catchup-budget.md)
 - [Terrain: attribution telemetry (and the removed neighbour-save coalescing)](docs/terrain-save-coalescing.md)
 - [Client loading timeline](docs/loading-telemetry.md)
@@ -103,6 +118,7 @@ Project documentation only: guides, each optimization module, and each telemetry
 - [Host and network path telemetry](docs/host-network-telemetry.md)
 - [AI cadence, pathfinding and spawn observations](docs/ai-telemetry.md)
 - [Main-thread CPU observation](docs/thread-cpu-telemetry.md)
+- [System resource telemetry](docs/system-resource-telemetry.md)
 
 ### Development
 
