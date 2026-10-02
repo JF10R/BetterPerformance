@@ -16,17 +16,23 @@ namespace BetterPerformance
     // Observers only: no skip, no result change. Names are read once per prefab, never per call.
     internal static class SpawnTelemetry
     {
-        private const int TrackedPrefabs = 32, MappedPrefabs = 128, ExportedRows = 12;
+        private const int TrackedPrefabs = 32, MappedPrefabs = 128, ExportedRows = 12, AltNames = 16;
         private static readonly SpawnTally Tally = new SpawnTally(TrackedPrefabs);
         private static readonly Dictionary<GameObject, int> Slots = new Dictionary<GameObject, int>(64, new ReferenceComparer());
+        // Alt-biome observations of the current interval: corner alt biomes seen, spawner names they blocked.
+        private static readonly List<string> AltSeen = new List<string>(AltNames);
+        private static readonly Dictionary<string, long> AltBlocked = new Dictionary<string, long>(AltNames, StringComparer.Ordinal);
+        private static AccessTools.FieldRef<SpawnSystem, Heightmap>? heightmapOf;
+        private static long altZoneChecks;
         private static CaptureSession? capture;
         private static ManualLogSource? log;
         private static int mainThread, listDepth, pointSlot = -1;
-        private static bool pointInBase, tablePending;
+        private static bool pointInBase, tablePending, altWorldPending;
         private static object? describedWorld;
-        private static string? table;
+        private static string? table, altWorld, playerSector;
         private static string listStatus = "disabled", speciesStatus = "disabled", capStatus = "disabled",
-            pointStatus = "disabled", rejectStatus = "disabled", baseStatus = "disabled", crowdStatus = "disabled";
+            pointStatus = "disabled", rejectStatus = "disabled", baseStatus = "disabled", crowdStatus = "disabled",
+            altStatus = "disabled";
 
         private sealed class ReferenceComparer : IEqualityComparer<GameObject>
         {
@@ -92,6 +98,13 @@ namespace BetterPerformance
                     : Patch(harmony, logger, targets[5], null, nameof(BasePostfix), null);
                 crowdStatus = listStatus != "enabled" ? "unavailable"
                     : Patch(harmony, logger, targets[6], null, nameof(CrowdPostfix), null);
+                if (listStatus != "enabled") altStatus = "unavailable";
+                else
+                {
+                    try { BindHeightmap(); altStatus = "enabled"; }
+                    catch (Exception exception)
+                    { altStatus = "unavailable"; logger.LogWarning("Spawn probe m_heightmap unavailable: " + exception.GetType().Name); }
+                }
             }
             TimingHooks.Availability.Add(new TextValue("probe.SpawnSpecies", speciesStatus));
             TimingHooks.Availability.Add(new TextValue("probe.SpawnRefusals", capStatus + "/" + pointStatus + "/" + rejectStatus + "/" + baseStatus + "/" + crowdStatus));
@@ -139,19 +152,56 @@ namespace BetterPerformance
             return slot;
         }
 
-        private static void ListPrefix(SpawnSystem __instance)
+        // Separate method so a type-load failure stays inside the caller's try.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void BindHeightmap() => heightmapOf = AccessTools.FieldRefAccess<SpawnSystem, Heightmap>("m_heightmap");
+
+        private static void ListPrefix(SpawnSystem __instance, List<SpawnSystem.SpawnData> __0)
         {
             listDepth++;
             try
             {
                 object? world = ZNet.instance;
-                if (ReferenceEquals(world, describedWorld) || world == null) return;
-                describedWorld = world;
-                table = Describe(__instance, Heightmap.Biome.Mountain);
-                tablePending = true;
-                log?.LogInfo("Spawn table (Mountain, runtime data): " + table);
+                if (world != null && !ReferenceEquals(world, describedWorld))
+                {
+                    describedWorld = world;
+                    table = Describe(__instance, Heightmap.Biome.Mountain);
+                    tablePending = true;
+                    log?.LogInfo("Spawn table (Mountain, runtime data): " + table);
+                    altWorld = DescribeAltBiomes();
+                    altWorldPending = true;
+                    log?.LogInfo("Alt biomes (runtime data): " + altWorld);
+                }
+                if (heightmapOf != null && Active() != null) ObserveAltBiomes(__instance, __0);
             }
             catch { capture?.RecordProbeFailure(); }
+        }
+
+        // Mirrors the first gate of UpdateSpawnList: an enabled spawner of a biome this zone has,
+        // named in a corner alt biome's m_blockSpawnNames, is skipped before any chance roll.
+        private static void ObserveAltBiomes(SpawnSystem system, List<SpawnSystem.SpawnData> spawners)
+        {
+            Heightmap map = heightmapOf!(system);
+            if (map is null) return;
+            List<AltBiome> corners = map.m_cornerAltBiomes;
+            if (corners == null || corners.Count == 0) return;
+            altZoneChecks++;
+            foreach (AltBiome alt in corners)
+                if (alt != null && AltSeen.Count < AltNames && !AltSeen.Contains(alt.m_name ?? "")) AltSeen.Add(alt.m_name ?? "");
+            if (spawners == null) return;
+            foreach (SpawnSystem.SpawnData d in spawners)
+            {
+                if (d == null || !d.m_enabled || !map.HaveBiome(d.m_biome)) continue;
+                foreach (AltBiome alt in corners)
+                {
+                    if (alt == null || !alt.m_blockSpawnNames.Contains(d.m_name)) continue;
+                    string name = d.m_name ?? "";
+                    if (AltBlocked.TryGetValue(name, out long count)) AltBlocked[name] = count + 1;
+                    else if (AltBlocked.Count < AltNames) AltBlocked[name] = 1;
+                    else AltBlocked["other"] = AltBlocked.TryGetValue("other", out long other) ? other + 1 : 1;
+                    break;
+                }
+            }
         }
 
         private static void ListFinalizer() => listDepth--;
@@ -280,6 +330,54 @@ namespace BetterPerformance
             return entries == 0 ? "none" : entries.ToString(CultureInfo.InvariantCulture) + " entries: " + text;
         }
 
+        // Every alt biome the game loaded, with what it blocks and adds. Internal names: an alt biome
+        // without prefix, suffix or override still shows the plain biome name in game.
+        private static string DescribeAltBiomes()
+        {
+            var text = new StringBuilder();
+            int entries = 0;
+            foreach (AltBiome a in AltBiomeList.m_altBiomes)
+            {
+                if (a == null) continue;
+                if (entries++ > 0) text.Append("; ");
+                text.Append(a.m_name)
+                    .Append(" biome=").Append(a.m_biome.ToString().Replace(", ", "|"))
+                    .Append(" on=").Append(a.m_enabled ? 1 : 0)
+                    .Append(" sectors=").Append(a.Sectors == null ? 0 : a.Sectors.Count)
+                    .Append(" (").Append(a.m_minAmountSpawned).Append('-').Append(a.m_maxAmountSpawned).Append(')')
+                    .Append(" shown=").Append(Or(a.m_nameOverride)).Append('/').Append(Or(a.m_namePrefix)).Append('/').Append(Or(a.m_nameSuffix))
+                    .Append(" env=").Append(Or(a.m_forceEnvironment))
+                    .Append(" blocks=").Append(a.m_blockSpawnNames.Count == 0 ? "-" : string.Join("|", a.m_blockSpawnNames.ToArray()))
+                    .Append(" adds=");
+                int added = 0;
+                foreach (SpawnSystem.SpawnData d in a.m_spawn)
+                {
+                    if (d == null) continue;
+                    if (added++ > 0) text.Append('|');
+                    text.Append(d.m_prefab is null ? "?" : d.m_prefab.name);
+                }
+                if (added == 0) text.Append('-');
+            }
+            return entries == 0 ? "none" : entries.ToString(CultureInfo.InvariantCulture) + " alt biomes: " + text;
+        }
+
+        private static string Or(string? value) => string.IsNullOrEmpty(value) ? "-" : value!;
+
+        // Biome sector under the local player and its alt biomes; null without a local player.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static string? PlayerSector()
+        {
+            Player player = Player.m_localPlayer;
+            if (player is null) return null;
+            BiomeSector sector = player.GetCurrentBiomeData();
+            if (sector == null || sector.Biome == Heightmap.Biome.None) return null;
+            var text = new StringBuilder(sector.Biome.ToString()).Append(" alt=");
+            if (sector.AltBiomes.Count == 0) return text.Append("none").ToString();
+            for (int i = 0; i < sector.AltBiomes.Count; i++)
+                text.Append(i > 0 ? "|" : "").Append(sector.AltBiomes[i]?.m_name);
+            return text.ToString();
+        }
+
         // Separate method so a type-load failure stays inside the caller's try.
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static string? CurrentEnvironment() => EnvMan.instance?.GetCurrentEnvironment()?.m_name;
@@ -295,11 +393,19 @@ namespace BetterPerformance
             labels.Add(new TextValue("spawn_point_reject_probe_status", rejectStatus));
             labels.Add(new TextValue("spawn_player_base_probe_status", baseStatus));
             labels.Add(new TextValue("spawn_crowding_probe_status", crowdStatus));
+            labels.Add(new TextValue("spawn_alt_biome_probe_status", altStatus));
             labels.Add(new TextValue("spawn_species_scope", "zone_owner_with_local_player; creatures_not_attempts; chance_interval_key_environment_time_refusals_unobserved"));
             try
             {
                 string? environment = CurrentEnvironment();
                 if (!string.IsNullOrEmpty(environment)) labels.Add(new TextValue("spawn_environment", environment!));
+                string? sector = PlayerSector();
+                if (sector != null)
+                {
+                    labels.Add(new TextValue("player_biome_sector", sector));
+                    if (sector != playerSector) log?.LogInfo("Biome sector: " + sector);
+                    playerSector = sector;
+                }
             }
             catch { capture?.RecordProbeFailure(); }
             if (tablePending && table != null)
@@ -307,6 +413,16 @@ namespace BetterPerformance
                 labels.Add(new TextValue("spawn_table_mountain", table));
                 tablePending = false;
             }
+            if (altWorldPending && altWorld != null)
+            {
+                labels.Add(new TextValue("spawn_alt_biomes_world", altWorld));
+                altWorldPending = false;
+            }
+            gauges.Add(new NumberValue("spawn_alt_zone_checks", altZoneChecks, "checks"));
+            if (AltSeen.Count > 0) labels.Add(new TextValue("spawn_alt_biomes", string.Join("|", AltSeen.ToArray())));
+            foreach (KeyValuePair<string, long> blocked in AltBlocked)
+                gauges.Add(new NumberValue("spawn_alt_blocked_" + SpawnTally.GaugeKey(blocked.Key), blocked.Value, "checks"));
+            ClearAlt();
             SpawnRow[] rows = Tally.Drain(ExportedRows);
             var total = new SpawnRow();
             foreach (SpawnRow row in rows)
@@ -346,8 +462,17 @@ namespace BetterPerformance
         {
             Tally.Reset();
             Slots.Clear();
+            ClearAlt();
             capture = null;
             tablePending = table != null;
+            altWorldPending = altWorld != null;
+        }
+
+        private static void ClearAlt()
+        {
+            AltSeen.Clear();
+            AltBlocked.Clear();
+            altZoneChecks = 0;
         }
     }
 }

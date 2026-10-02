@@ -58,6 +58,20 @@ The inspected `SpawnSystem.UpdateSpawning` path requires both local ownership an
 
 Totals are exported as `spawn_<suffix>` every interval, zero included. Per-prefab rows are `spawn_by_prefab_<name>_<suffix>`, non-zero only: 32 named prefabs per capture, the 12 busiest per interval, the rest in `other`. Refusals by chance roll, interval, biome, global key, environment and day/night are not observable without hooking widely used statics; an entry with zero cap checks and zero point searches was stopped by one of them. To read those gates, `spawn_table_mountain` (once per capture, and in the BepInEx log once per world) lists every Mountain entry of `SpawnSystem.m_spawnLists` with its time, environment, key, cap, interval, chance, group, `m_insidePlayerBase`, altitude and radius; `spawn_environment` gives the environment at export. Alt-biome and event spawn lists are not in the table.
 
+#### Alt biomes
+
+Since 1.0, a biome sector can carry hidden alt biomes. One without a prefix, suffix or override still shows the plain biome name in game. `UpdateSpawnList` skips an enabled spawner of a biome the zone has whose `m_name` is listed in a corner alt biome's `m_blockSpawnNames`, before any chance roll. The `UpdateSpawnList` prefix mirrors that check:
+
+| Field | Meaning |
+|---|---|
+| `spawn_alt_biomes_world` | Once per capture (and in the log once per world): every loaded alt biome with its biome, placed sectors, shown name parts, forced environment, blocked spawner names and added spawn prefabs |
+| `spawn_alt_biomes` | Corner alt biomes of the zones evaluated in the interval; absent when none |
+| `spawn_alt_zone_checks` | Spawn-list evaluations (about 1/s per owned zone) whose zone has a corner alt biome |
+| `spawn_alt_blocked_<spawner>` | Evaluations where that spawner name was blocked; non-zero only, 16 names then `other` |
+| `player_biome_sector` | Biome and alt biomes of the sector under the local player, every interval; each change is logged as `Biome sector:` |
+
+The check reads `SpawnSystem.m_heightmap` and allocates nothing per call once warm; status `spawn_alt_biome_probe_status`.
+
 Which prefabs carry a PlayerBase area is asset data, not code. ValheimPlus resizes the PlayerBase collider of crafting stations to `workbenchEnemySpawnRange`, or `workbenchRange` when that is 0.
 
 Prefab names are read once per prefab; hooks key a bounded reference map and allocate nothing per call once warm. The `IsPointInsideArea` postfix runs for every caller and returns after one static compare unless a spawn point check is in progress. Each hook has its own status label (`spawn_*_probe_status`); `cap_refused` needs the list and search hooks, the PlayerBase count needs the point hook. Cost is bounded by design, not measured.
@@ -72,6 +86,6 @@ The hooks preserve arguments, return values and native exceptions. Signature val
 
 `AiCadenceTests.Run` covers wall time versus supplied `dt`, same-frame repetition, source/scratch counts, cross-export continuity, invalid/regressing observations, independent snapshots and capture reset. These synthetic tests do not establish AI behavior or spawn success.
 
-`SpawnTallyTests.Run` covers slot bounds, `other` folding, the cap derivation and gauge-key sanitizing. `SpawnGameTests.Run` reads the seven hook signatures, the `SpawnData` fields and the call order from metadata and checks every observer is void with no by-ref result; a standalone CLR cannot load `SpawnSystem`, so installation itself is proven only in Unity.
+`SpawnTallyTests.Run` covers slot bounds, `other` folding, the cap derivation and gauge-key sanitizing. `SpawnGameTests.Run` reads the seven hook signatures, the `SpawnData` and `AltBiome` fields, the call order and the alt-biome block position (after `HaveBiome`, before the chance roll) from metadata and checks every observer is void with no by-ref result; a standalone CLR cannot load `SpawnSystem`, so installation itself is proven only in Unity.
 
 `AiGameTests.Run` checks the installed game signatures, installs/removes the cadence and path-result hooks in a standalone process, and exercises the inactive path-result hook. It does not invoke the game methods or the cadence prefix: that prefix references native Unity `Time`, whose internal calls cannot execute in standalone CLR. The helper passed against both local client and dedicated-server assemblies; their reference builds also compiled without warnings. Separately authorized isolated runtime validation must report its own results.

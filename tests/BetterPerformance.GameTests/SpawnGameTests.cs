@@ -35,7 +35,14 @@ internal static class SpawnGameTests
         "m_spawnRadiusMin", "m_spawnRadiusMax", "m_spawnDistance"
     };
 
-    private static readonly string[] Statuses = { "listStatus", "speciesStatus", "capStatus", "pointStatus", "rejectStatus", "baseStatus", "crowdStatus" };
+    // The alt-biome description and the blocked-spawner mirror read these members.
+    private static readonly string[] AltBiomeFields =
+    {
+        "m_name", "m_enabled", "m_biome", "m_blockSpawnNames", "m_spawn", "m_namePrefix", "m_nameSuffix",
+        "m_nameOverride", "m_forceEnvironment", "m_minAmountSpawned", "m_maxAmountSpawned", "Sectors"
+    };
+
+    private static readonly string[] Statuses = { "listStatus", "speciesStatus", "capStatus", "pointStatus", "rejectStatus", "baseStatus", "crowdStatus", "altStatus" };
 
     internal static void Run(Assembly game, Assembly plugin)
     {
@@ -78,6 +85,26 @@ internal static class SpawnGameTests
             var calls = list.Body.Instructions.Where(i => i.Operand is MethodReference).Select(i => ((MethodReference)i.Operand).Name).ToList();
             int cap = calls.IndexOf("GetNrOfZDOInstances"), search = calls.IndexOf("FindBaseSpawnPoint");
             Check(cap >= 0 && search == cap + 1, "UpdateSpawnList calls FindBaseSpawnPoint right after GetNrOfZDOInstances (no call between)");
+            // The alt-biome mirror: enabled + HaveBiome, then corner m_blockSpawnNames by m_name, before the chance roll.
+            var steps = list.Body.Instructions.Select(i => i.Operand is MemberReference m ? m.Name : "").ToList();
+            int block = steps.IndexOf("m_blockSpawnNames"), roll = steps.IndexOf("Range");
+            Check(steps.IndexOf("m_enabled") >= 0 && steps.IndexOf("HaveBiome") >= 0 && steps.IndexOf("m_cornerAltBiomes") >= 0 &&
+                block > steps.IndexOf("HaveBiome") && roll > block, "UpdateSpawnList checks corner alt-biome blocks after HaveBiome and before the chance roll");
+            Check(spawn.Fields.Any(f => f.Name == "m_heightmap" && !f.IsStatic && f.FieldType.FullName == "Heightmap"), "SpawnSystem.m_heightmap is a Heightmap field");
+            TypeDefinition heightmap = module.GetType("Heightmap")!;
+            Check(heightmap.Fields.Any(f => f.Name == "m_cornerAltBiomes" && f.IsPublic && !f.IsStatic &&
+                f.FieldType.FullName == "System.Collections.Generic.List`1<AltBiome>"), "Heightmap.m_cornerAltBiomes lists AltBiome");
+            Check(heightmap.Methods.Any(m => m.Name == "HaveBiome" && m.IsPublic && !m.IsStatic && m.Parameters.Count == 1 &&
+                m.ReturnType.FullName == "System.Boolean"), "Heightmap.HaveBiome(Biome) is public bool");
+            TypeDefinition alt = module.GetType("AltBiome")!;
+            foreach (string field in AltBiomeFields)
+                Check(alt.Fields.Any(f => f.Name == field && f.IsPublic && !f.IsStatic), "AltBiome." + field + " is a public field");
+            Check(module.GetType("AltBiomeList")!.Fields.Any(f => f.Name == "m_altBiomes" && f.IsPublic && f.IsStatic), "AltBiomeList.m_altBiomes is static");
+            TypeDefinition sector = module.GetType("BiomeSector")!;
+            Check(sector.Fields.Any(f => f.Name == "AltBiomes" && f.IsPublic) && sector.Fields.Any(f => f.Name == "Biome" && f.IsPublic),
+                "BiomeSector.Biome and AltBiomes are public fields");
+            Check(module.GetType("Player")!.Methods.Any(m => m.Name == "GetCurrentBiomeData" && m.IsPublic && m.Parameters.Count == 0 &&
+                m.ReturnType.FullName == "BiomeSector"), "Player.GetCurrentBiomeData() returns BiomeSector");
         }
 
         Type telemetry = plugin.GetType("BetterPerformance.SpawnTelemetry", true)!;
@@ -150,11 +177,12 @@ internal static class SpawnGameTests
             telemetry.GetMethod("Sample", StaticPrivate)!.Invoke(null, new object[] { gauges, labels });
             PropertyInfo gaugeName = number.GetProperty("Name")!, gaugeValue = number.GetProperty("Value")!, labelName = text.GetProperty("Name")!;
             var rows = gauges.Cast<object>().Select(g => ((string)gaugeName.GetValue(g)!, (double)gaugeValue.GetValue(g)!)).ToArray();
-            Check(rows.Length == 9 && rows.All(r => r.Item2 == 0 && r.Item1.StartsWith("spawn_", StringComparison.Ordinal)),
-                "inactive hooks export exactly the nine zero totals");
-            Check(labels.Cast<object>().Count(l => ((string)labelName.GetValue(l)!).EndsWith("_probe_status", StringComparison.Ordinal)) == 7,
+            Check(rows.Length == 10 && rows.All(r => r.Item2 == 0 && r.Item1.StartsWith("spawn_", StringComparison.Ordinal)),
+                "inactive hooks export exactly the nine zero totals and the zero alt-biome zone count");
+            Check(labels.Cast<object>().Count(l => ((string)labelName.GetValue(l)!).EndsWith("_probe_status", StringComparison.Ordinal)) == Statuses.Length,
                 "every spawn probe reports its own status");
-            Console.WriteLine("PASS spawn telemetry: " + checks + " checks; " + enabled + "/7 probes installed on this CLR");
+            Check(!labels.Cast<object>().Any(l => ((string)labelName.GetValue(l)!) == "spawn_alt_biomes"), "no alt biome is reported without an observation");
+            Console.WriteLine("PASS spawn telemetry: " + checks + " checks; " + enabled + "/" + Statuses.Length + " probes installed on this CLR");
             if (offline.Count > 0)
                 Console.WriteLine("STATIC ONLY spawn probes " + string.Join(", ", offline) +
                     ": signature verified from metadata; offline CLR cannot load Player, so install is proven only in Unity");

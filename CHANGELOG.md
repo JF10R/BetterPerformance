@@ -1,5 +1,9 @@
 # Changelog
 
+### 0.4.22
+
+- Spawn telemetry: alt biomes. Hidden alt biomes can block a spawner by name before any chance roll and still show the plain biome name in game. On 2026-10-01, at night in one Mountain, neither client ever reached a wolf cap check (hatchlings: 10 and 8); back there with this probe, the sector read `Drake Mountain` (blocks Wolf and Skeleton, adds Hatchling) and wolves were blocked on every evaluation. New: `spawn_alt_biomes_world` (every loaded alt biome, what it blocks and adds), `spawn_alt_biomes` and `spawn_alt_zone_checks` (evaluated zones), `spawn_alt_blocked_<spawner>`, `player_biome_sector` (logged on change). Observation only.
+
 ### 0.4.21
 
 Fixes from an external audit, each checked against the code first. No gameplay decision changes.
