@@ -146,7 +146,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                try { Patches.UnpatchSelf(); } catch { }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { }
                 Installed = false;
                 Status = "unavailable";
                 logger.LogWarning("Character save disk phase attribution unavailable: " + exception.GetType().Name);

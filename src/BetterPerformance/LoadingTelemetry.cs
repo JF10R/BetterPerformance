@@ -54,7 +54,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf(); Installed = Enabled = false; Status = "unavailable";
+                PatchRemoval.UnpatchOwned(Patches); Installed = Enabled = false; Status = "unavailable";
                 logger.LogWarning("Loading telemetry unavailable: " + exception.GetType().Name);
             }
         }
@@ -223,6 +223,6 @@ namespace BetterPerformance
         }
         private static void Add(List<NumberValue> gauges, string name, double value)
         { if (!double.IsNaN(value) && !double.IsInfinity(value) && value >= 0) gauges.Add(new NumberValue(name, value, "ms")); }
-        internal static void Uninstall() { Patches.UnpatchSelf(); Installed = Enabled = false; Status = "disabled"; Reset(); }
+        internal static void Uninstall() { PatchRemoval.UnpatchOwned(Patches); Installed = Enabled = false; Status = "disabled"; Reset(); }
     }
 }

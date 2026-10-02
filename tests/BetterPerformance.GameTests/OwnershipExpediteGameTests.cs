@@ -107,7 +107,6 @@ internal static class OwnershipExpediteGameTests
 
         // 6. The per-second bound and the duplicate guard, exercised directly.
         var admit = expedite.GetMethod("Admit", PrivateStatic)!;
-        expedite.GetMethod("Reset", PrivateStatic)!.Invoke(null, null);
         cap.Value = 3;
         object MakeId(uint id) => Activator.CreateInstance(zdoId, new object[] { 7L, id })!;
         Check((bool)admit.Invoke(null, new[] { (object)11L, MakeId(1) })!, "first grant inside the bound is admitted");
@@ -140,6 +139,17 @@ internal static class OwnershipExpediteGameTests
         Check(counters["ownership_grants_skipped_capacity"] == 2, "capacity skips were counted by the bound above");
         Check(counters["ownership_grants_skipped_duplicate"] == 1, "the duplicate guard was counted");
         Check(Numbers(out _).Values.All(value => value == 0), "Sample drains its interval counters");
+        // A capture stop and restart in the same second (segment rotation) resets statistics only: the window
+        // admitted three grants above and must neither re-admit one nor reopen its consumed quota.
+        expedite.GetMethod("Reset", PrivateStatic)!.Invoke(null, null);
+        cap.Value = 10;
+        Check(!(bool)admit.Invoke(null, new[] { (object)11L, MakeId(1) })!, "a capture restart does not re-admit a grant already forced");
+        cap.Value = 3;
+        Check(!(bool)admit.Invoke(null, new[] { (object)14L, MakeId(5) })!, "a capture restart does not reopen a consumed quota");
+        var afterRestart = Numbers(out _);
+        Check(afterRestart["ownership_grants_skipped_duplicate"] == 1 && afterRestart["ownership_grants_skipped_capacity"] == 1,
+            "after the restart, one duplicate and one capacity refusal are counted");
+        cap.Value = 0;
 
         // 8. The ZDO count gauge added to the existing ownership telemetry.
         var objects = zdoMan.GetField("m_objectsByID", Declared);

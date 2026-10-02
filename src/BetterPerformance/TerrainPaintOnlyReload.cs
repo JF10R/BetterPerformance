@@ -67,7 +67,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 Installed = false;
                 Status = "unavailable";
                 logger.LogWarning("Terrain paint-only reload unavailable; every reload stays a full rebuild: " + exception.GetType().Name + ": " + exception.Message);
@@ -143,7 +143,7 @@ namespace BetterPerformance
 
         internal static void Uninstall()
         {
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Installed = false;
             Status = "disabled";
             pending = null;

@@ -105,7 +105,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 Installed = Enabled = false;
                 Status = "unavailable";
                 logger.LogWarning("Object creation budget unavailable; vanilla behavior retained: " + exception.GetType().Name);
@@ -127,7 +127,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                TelemetryPatches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(TelemetryPatches);
                 telemetryStatus = "unavailable";
                 logger.LogWarning("Budget diagnostics unavailable: " + exception.GetType().Name);
             }
@@ -507,8 +507,8 @@ namespace BetterPerformance
         {
             Enabled = Installed = false;
             loadingScreen = null;
-            Patches.UnpatchSelf();
-            TelemetryPatches.UnpatchSelf();
+            PatchRemoval.UnpatchOwned(Patches);
+            PatchRemoval.UnpatchOwned(TelemetryPatches);
             ResetTelemetry();
             telemetryStatus = "disabled";
             LootCreationPriority.Reset();

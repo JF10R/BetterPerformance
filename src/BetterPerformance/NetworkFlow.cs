@@ -108,7 +108,7 @@ namespace BetterPerformance
                 Status = "unavailable_unexpected_shape";
                 // A failed rollback must not escape: Installed=false already makes the hook
                 // return the vanilla constant, and an exception here would abort start-up.
-                try { Patches.UnpatchSelf(); } catch { Interlocked.Increment(ref failures); }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { Interlocked.Increment(ref failures); }
                 logger.LogWarning("Adaptive network flow unavailable; the native send gate is retained: " + exception.Message);
             }
         }
@@ -419,7 +419,7 @@ namespace BetterPerformance
         internal static void Uninstall()
         {
             Reset();
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             lock (Gate)
             {
                 foreach (var entry in Links) Controller.Forget(entry.Key);

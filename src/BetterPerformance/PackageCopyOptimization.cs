@@ -54,7 +54,7 @@ namespace BetterPerformance
             {
                 Enabled = Installed = false;
                 Status = "unavailable";
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 logger.LogWarning("Local package copy unavailable; native writes retained: " + exception.GetType().Name);
             }
         }
@@ -201,7 +201,7 @@ namespace BetterPerformance
         internal static void Uninstall()
         {
             Enabled = false;
-            Patches.UnpatchSelf();
+            PatchRemoval.UnpatchOwned(Patches);
             Installed = false;
             Status = "disabled";
             conflictOwner = "none";

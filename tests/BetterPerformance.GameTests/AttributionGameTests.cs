@@ -208,17 +208,14 @@ internal static class AttributionGameTests
         {
             Method(telemetry, "Uninstall").Invoke(null, null);
         }
-        // Standalone .NET Framework cannot read bodies that carry Unity interface
-        // defaults, so Harmony may refuse the removal here. The probe reports that
-        // instead of throwing; removal itself requires Unity runtime validation.
+        // This process holds patches whose bodies this CLR cannot load; removal must not depend on them.
         string cleanup = (string?)telemetry.GetProperty("Status", Declared)!.GetValue(null) ?? "";
-        if (cleanup.StartsWith("unpatch_failed", StringComparison.Ordinal))
-            Console.WriteLine("STATIC ONLY attribution cleanup: " + cleanup +
-                "; Harmony rescans every patched method in this shared process, so removal requires Unity runtime validation");
-        else
-            foreach (MethodInfo target in timed)
-                Check(Harmony.GetPatchInfo(target)?.Prefixes.Any(patch => patch.owner == owner) != true,
-                    target.Name + " is released when the probe is removed");
+        Check(!cleanup.StartsWith("unpatch_failed", StringComparison.Ordinal), "the probe is removed without an unpatch failure (actual=" + cleanup + ")");
+        foreach (MethodInfo target in timed)
+            Check(Harmony.GetPatchInfo(target)?.Prefixes.Any(patch => patch.owner == owner) != true,
+                target.Name + " is released when the probe is removed");
+        string retained = PatchOwnership.Retained(owner);
+        Check(retained == "none", "Uninstall leaves no method patched by this module (retained: " + retained + ")");
 
         // Runs last and is never removed: a refused generic patch still leaves state
         // that blocks a later removal, which is exactly why the probe skips them.

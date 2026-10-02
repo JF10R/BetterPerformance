@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Reflection;
 using System.Threading;
 using BepInEx.Bootstrap;
@@ -16,10 +18,11 @@ namespace BetterPerformance
     // ordering rule to get wrong. Sending turns on for one direction the moment that side
     // receives the peer's offer on a compatible version, so a peer without this plugin never
     // sends an offer and is never sent a frame. An unframed packet stays valid either way, so
-    // a mismatch degrades to uncompressed traffic, never to garbage.
+    // a mismatch degrades to uncompressed traffic, never to garbage. Once installed, decoding
+    // never stops: a failure or the option turned off only stops offering and encoding.
     // Cost: Deflate at Fastest on the ~1-10 KB packets Valheim sends about 20 times a second
-    // per peer, plus one array copy per decoded message. Measured ratio and CPU belong in the
-    // session capture, not here.
+    // per peer. A received header is read in place; only a frame is inflated and rebuilt.
+    // Measured ratio and CPU belong in the session capture, not here.
     internal static class NetworkCompression
     {
         private const int FailureLimit = 8;
@@ -31,12 +34,19 @@ namespace BetterPerformance
         private static readonly Dictionary<ZSteamSocket, State> States = new Dictionary<ZSteamSocket, State>();
         private static ConfigEntry<bool>? option;
         private static AccessTools.FieldRef<ZSteamSocket, Queue<byte[]>>? queueRef;
+        // Null when ZPackage no longer has a MemoryStream m_stream: the decoder then copies
+        // each packet with GetArray, as before, instead of refusing to install.
+        private static AccessTools.FieldRef<ZPackage, MemoryStream>? streamRef;
         private static bool failed;
         private static long compressPackets, compressRawBytes, compressWireBytes, compressKeptRaw;
         private static long decodePackets, decodeRawBytes, decodeWireBytes, decodeFailures, unframedReceived;
         private static long peersOffered, peersIncompatible, failures, failureTotal;
+        // Stopwatch ticks: one pair per encoding flush and per framed packet received.
+        private static long compressTicks, compressMaxTicks, decodeTicks, decodeMaxTicks;
 
         internal static bool Installed { get; private set; }
+        // Gates offering and encoding only. Decoding is gated on Installed alone: the peer
+        // keeps sending frames after we stop, and those must never reach the game raw.
         internal static bool Enabled => Installed && !failed && option != null && option.Value;
         internal static string Status { get; private set; } = "disabled";
 
@@ -79,6 +89,14 @@ namespace BetterPerformance
                 Patches.Patch(Contract.NewConnection!, postfix: new HarmonyMethod(typeof(NetworkCompression), nameof(AfterNewConnection)));
                 Patches.Patch(Contract.Disconnect!, postfix: new HarmonyMethod(typeof(NetworkCompression), nameof(AfterDisconnect)));
                 queueRef = AccessTools.FieldRefAccess<ZSteamSocket, Queue<byte[]>>("m_sendQueue");
+                // Optional: a miss here costs one copy per packet, never the install.
+                try
+                {
+                    var stream = AccessTools.DeclaredField(typeof(ZPackage), "m_stream");
+                    streamRef = stream != null && !stream.IsStatic && stream.FieldType == typeof(MemoryStream)
+                        ? AccessTools.FieldRefAccess<ZPackage, MemoryStream>(stream) : null;
+                }
+                catch { streamRef = null; }
                 Installed = true;
                 failed = false;
                 Status = "installed";
@@ -90,7 +108,7 @@ namespace BetterPerformance
                 Status = "unavailable_unexpected_shape";
                 // A failed rollback must not escape: Installed=false already makes every hook
                 // a no-op, and an escaping exception would abort plugin start-up.
-                try { Patches.UnpatchSelf(); } catch { Interlocked.Increment(ref failures); }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { Interlocked.Increment(ref failures); }
                 logger.LogWarning("Network compression unavailable; traffic stays uncompressed: " + exception.Message);
             }
         }
@@ -209,12 +227,24 @@ namespace BetterPerformance
                 if (state == null || !state.SendStarted) return;
                 var queue = queueRef(__instance);
                 if (queue == null || queue.Count == 0) return;
+                long started = Stopwatch.GetTimestamp();
                 // Rotate the queue once so order is preserved and each array is encoded once.
                 for (int i = 0, count = queue.Count; i < count; i++)
                     queue.Enqueue(EncodeOnce(state, queue.Dequeue()));
+                AddElapsed(ref compressTicks, ref compressMaxTicks, started);
             }
             catch { Fail(); }
         }
+
+        private static void AddElapsed(ref long sum, ref long max, long started)
+        {
+            long elapsed = Stopwatch.GetTimestamp() - started;
+            Interlocked.Add(ref sum, elapsed);
+            long seen;
+            while (elapsed > (seen = Interlocked.Read(ref max)) && Interlocked.CompareExchange(ref max, elapsed, seen) != seen) { }
+        }
+
+        private static double Milliseconds(ref long ticks) => Interlocked.Exchange(ref ticks, 0) * 1000.0 / Stopwatch.Frequency;
 
         private static byte[] EncodeOnce(State state, byte[] item)
         {
@@ -242,37 +272,56 @@ namespace BetterPerformance
             catch { Fail(); }
         }
 
+        // Gated on Installed, never on Enabled: after a failure or with the option turned off
+        // the peer still sends frames, and only this hook stands between them and the game.
         private static void AfterRecv(ZSteamSocket __instance, ref ZPackage __result)
         {
-            if (__result == null || !Enabled || __instance == null) return;
+            if (__result == null || !Installed || __instance == null) return;
             try
             {
-                byte[] data = __result.GetArray();
-                if (data == null) return;
+                // Recv builds the package with new ZPackage(byte[]), an expandable stream whose
+                // buffer is exposable: read the header in place. Anything else costs one copy.
+                byte[] data;
+                int offset, count;
+                var access = streamRef;
+                MemoryStream? stream = access == null ? null : access(__result);
+                if (stream != null && stream.GetType() == typeof(MemoryStream) && stream.TryGetBuffer(out var segment) && segment.Array != null)
+                { data = segment.Array; offset = segment.Offset; count = segment.Count; }
+                else
+                {
+                    data = __result.GetArray();
+                    if (data == null) return;
+                    offset = 0; count = data.Length;
+                }
                 // The frame identifies itself, so the decoder needs no per-socket flag. The
                 // raw counter stays keyed on the state, where it still means something: raw
                 // packets from a peer that does run this plugin.
-                if (!CompressionFrame.IsFramed(data))
+                if (!CompressionFrame.IsFramed(data, offset, count))
                 {
                     if (Lookup(__instance) != null) Interlocked.Increment(ref unframedReceived);
                     return;
                 }
+                long started = Stopwatch.GetTimestamp();
                 // A framed header with an unusable body is left alone: the game rejects the
                 // resulting RPC, which is strictly better than throwing out of the transport.
-                if (!CompressionFrame.TryDecode(data, out byte[] raw)) { Interlocked.Increment(ref decodeFailures); return; }
-                __result = new ZPackage(raw);
+                bool decoded = CompressionFrame.TryDecode(data, offset, count, out byte[] raw);
+                if (decoded) __result = new ZPackage(raw);
+                AddElapsed(ref decodeTicks, ref decodeMaxTicks, started);
+                if (!decoded) { Interlocked.Increment(ref decodeFailures); return; }
                 Interlocked.Increment(ref decodePackets);
                 Interlocked.Add(ref decodeRawBytes, raw.Length);
-                Interlocked.Add(ref decodeWireBytes, data.Length);
+                Interlocked.Add(ref decodeWireBytes, count);
             }
             catch { Fail(); }
         }
 
+        // Stops offering and encoding only (Enabled reads the flag); AfterRecv never does, so a
+        // failure anywhere, the decoder included, cannot leave a peer's frames undecoded.
         private static void Fail()
         {
             Interlocked.Increment(ref failures);
             if (Interlocked.Increment(ref failureTotal) < FailureLimit) return;
-            // Do not unpatch from inside a patch: the flag alone makes every hook a no-op.
+            // Do not unpatch from inside a patch: the flag alone stops the send side.
             failed = true;
             Status = "failed";
         }
@@ -291,6 +340,10 @@ namespace BetterPerformance
             Interlocked.Exchange(ref peersOffered, 0);
             Interlocked.Exchange(ref peersIncompatible, 0);
             Interlocked.Exchange(ref failures, 0);
+            Interlocked.Exchange(ref compressTicks, 0);
+            Interlocked.Exchange(ref compressMaxTicks, 0);
+            Interlocked.Exchange(ref decodeTicks, 0);
+            Interlocked.Exchange(ref decodeMaxTicks, 0);
         }
 
         internal static void Sample(List<NumberValue> gauges, List<TextValue> labels)
@@ -322,6 +375,12 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("net_compress_peers_offered", Interlocked.Exchange(ref peersOffered, 0), "peers"));
             gauges.Add(new NumberValue("net_compress_peers_incompatible", Interlocked.Exchange(ref peersIncompatible, 0), "peers"));
             gauges.Add(new NumberValue("net_compress_failures", Interlocked.Exchange(ref failures, 0), "calls"));
+            // Elapsed time inside the hooks (sum and worst per export): encoding flushes, and framed packets
+            // inflated and rebuilt. The in-place header test on raw packets is not timed.
+            gauges.Add(new NumberValue("net_compress_compress_ms", Milliseconds(ref compressTicks), "ms"));
+            gauges.Add(new NumberValue("net_compress_compress_max_ms", Milliseconds(ref compressMaxTicks), "ms"));
+            gauges.Add(new NumberValue("net_compress_decode_ms", Milliseconds(ref decodeTicks), "ms"));
+            gauges.Add(new NumberValue("net_compress_decode_max_ms", Milliseconds(ref decodeMaxTicks), "ms"));
             labels.Add(new TextValue("net_compress_status", !Installed ? Status : failed ? "failed" : Enabled ? "enabled" : "installed_disabled"));
             labels.Add(new TextValue("net_compress_enabled", Enabled ? "true" : "false"));
             labels.Add(new TextValue("net_compress_version", ProtocolVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)));
@@ -331,13 +390,14 @@ namespace BetterPerformance
         internal static void Uninstall()
         {
             Reset();
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             lock (States) States.Clear();
             Installed = false;
             failed = false;
             Status = "disabled";
             option = null;
             queueRef = null;
+            streamRef = null;
             Interlocked.Exchange(ref failureTotal, 0);
         }
     }

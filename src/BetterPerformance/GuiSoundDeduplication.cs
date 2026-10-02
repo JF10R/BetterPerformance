@@ -51,7 +51,7 @@ namespace BetterPerformance
             catch (Exception exception)
             {
                 Release("patch_failed");
-                try { Patches.UnpatchSelf(); } catch { Interlocked.Increment(ref failures); }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { Interlocked.Increment(ref failures); }
                 logger.LogWarning("GUI group-sound deduplication could not patch SetActiveGroup: " + exception.GetType().Name);
             }
         }
@@ -122,7 +122,7 @@ namespace BetterPerformance
         internal static void Uninstall()
         {
             Reset();
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Release("disabled");
             option = null;
         }

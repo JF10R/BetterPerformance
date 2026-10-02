@@ -17,7 +17,10 @@ internal static class MinimapCacheStoreTests
         CorruptFiles();
         DirectoryBehaviour();
         CleanupPlan();
+        SizeBounds();
     }
+
+    private const long Limit = 1024 * 1024;
 
     private static MinimapCacheEntry Entry(string key, byte seed, bool verified = false, int mismatches = 0) =>
         new MinimapCacheEntry(key, 4, 4, "4/4/RGB24/R8G8B8_SRGB/1", "4/4/RGBA32/R8G8B8A8_SRGB/1", "4/4/RHalf/R16_SFloat/1",
@@ -105,7 +108,7 @@ internal static class MinimapCacheStoreTests
         string directory = Path.Combine(Path.GetTempPath(), "bp-minimap-" + Guid.NewGuid().ToString("N"));
         try
         {
-            Check(!MinimapCacheStore.TryLoad(directory, KeyA, out _, out string missing) && missing == "missing",
+            Check(!MinimapCacheStore.TryLoad(directory, KeyA, Limit, out _, out string missing) && missing == "missing",
                 "An absent entry reports a miss, not a failure.");
             var entry = Entry(KeyA, 11, true);
             Check(MinimapCacheStore.TryStore(directory, entry, 1024 * 1024, 1024 * 1024, out long bytes, out string stored) && stored == "ok",
@@ -113,24 +116,24 @@ internal static class MinimapCacheStoreTests
             Check(bytes > 0 && File.Exists(Path.Combine(directory, KeyA + ".bin")), "The entry is written under its key.");
             Check(!Directory.GetFiles(directory).Any(p => p.EndsWith(".writing", StringComparison.Ordinal)),
                 "No staging file survives a successful write.");
-            Check(MinimapCacheStore.TryLoad(directory, KeyA, out var loaded, out _) && loaded != null &&
+            Check(MinimapCacheStore.TryLoad(directory, KeyA, Limit, out var loaded, out _) && loaded != null &&
                 MinimapCacheStore.SameContent(entry, loaded!) && loaded!.Verified, "The stored entry loads back exactly.");
-            Check(!MinimapCacheStore.TryLoad(directory, KeyB, out _, out string other) && other == "missing",
+            Check(!MinimapCacheStore.TryLoad(directory, KeyB, Limit, out _, out string other) && other == "missing",
                 "A different key never returns another key's entry.");
 
             // A file placed under the wrong key must never be served for that key.
             File.WriteAllBytes(Path.Combine(directory, KeyB + ".bin"), MinimapCacheStore.Serialize(entry));
-            Check(!MinimapCacheStore.TryLoad(directory, KeyB, out _, out string mismatch) && mismatch == "key_mismatch",
+            Check(!MinimapCacheStore.TryLoad(directory, KeyB, Limit, out _, out string mismatch) && mismatch == "key_mismatch",
                 "A misfiled entry is rejected, got " + mismatch);
 
             File.WriteAllBytes(Path.Combine(directory, KeyB + ".bin"), new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 });
-            Check(!MinimapCacheStore.TryLoad(directory, KeyB, out _, out _), "A corrupt file on disk is rejected, not thrown.");
+            Check(!MinimapCacheStore.TryLoad(directory, KeyB, Limit, out _, out _), "A corrupt file on disk is rejected, not thrown.");
 
             Check(!MinimapCacheStore.TryStore(directory, entry, 8, 1024 * 1024, out _, out string tooBig) && tooBig == "entry_too_large",
                 "An entry above the per-entry limit is refused.");
             Check(!MinimapCacheStore.TryStore(directory, entry, 1024 * 1024, 8, out _, out string noRoom) && noRoom == "entry_too_large",
                 "An entry larger than the whole directory allowance is refused.");
-            Check(MinimapCacheStore.TryLoad(directory, KeyA, out _, out _), "A refused store leaves the existing entry intact.");
+            Check(MinimapCacheStore.TryLoad(directory, KeyA, Limit, out _, out _), "A refused store leaves the existing entry intact.");
 
             // Allowance cleanup removes our own oldest entries and nothing else.
             string foreign = Path.Combine(directory, "unrelated.txt");
@@ -142,7 +145,7 @@ internal static class MinimapCacheStoreTests
                 "A tight allowance still stores the incoming entry: " + tight);
             Check(!File.Exists(Path.Combine(directory, KeyB + ".bin")), "The oldest plugin entry is removed first.");
             Check(File.Exists(foreign) && new FileInfo(foreign).Length == 4096, "Cleanup never touches a file we did not write.");
-            Check(MinimapCacheStore.TryLoad(directory, KeyA, out var current, out _) && current != null &&
+            Check(MinimapCacheStore.TryLoad(directory, KeyA, Limit, out var current, out _) && current != null &&
                 MinimapCacheStore.SameContent(replacement, current!), "The incoming entry replaced the previous one under its key.");
             Check(MinimapCacheStore.List(directory).Count == 1, "Only our own keyed files are listed.");
         }
@@ -163,6 +166,45 @@ internal static class MinimapCacheStoreTests
         var all = MinimapCacheStore.PlanCleanup(files, 10, 100, "");
         Check(all.Count == 2 && all[0] == KeyB && all[1] == KeyA, "An impossible allowance still only plans our own files, oldest first.");
         Check(!MinimapCacheStore.PlanCleanup(files, 10, 100, "").Contains("not a key"), "A foreign file is never scheduled for deletion.");
+    }
+
+    private static void SizeBounds()
+    {
+        // The ceiling must sit far above any real entry: 9 B/px worst case at 4096².
+        Check(MinimapCacheStore.MaxPayloadBytes >= 4096L * 4096 * 9, "The inflate ceiling covers a 4096² worst-case entry.");
+        var entry = Entry(KeyA, 5, true);
+        byte[] file = MinimapCacheStore.Serialize(entry);
+        Check(MinimapCacheStore.TryDeserialize(file, out var normal, out string ok, entry.PayloadBytes + 1024) && normal != null,
+            "A real entry inflates under a cap just above its own payload: " + ok);
+
+        // A gzip bomb: magic plus 4 MiB of zeros, compressed to a few KiB, against a 1 MiB cap.
+        byte[] bomb;
+        using (var stream = new MemoryStream())
+        {
+            byte[] magic = System.Text.Encoding.ASCII.GetBytes("BPMINIMAP");
+            stream.Write(magic, 0, magic.Length);
+            using (var gzip = new System.IO.Compression.GZipStream(stream, System.IO.Compression.CompressionLevel.Fastest, true))
+                gzip.Write(new byte[4 * 1024 * 1024], 0, 4 * 1024 * 1024);
+            bomb = stream.ToArray();
+        }
+        Check(bomb.Length < 64 * 1024, "The bomb fixture is small on disk: " + bomb.Length);
+        Check(!MinimapCacheStore.TryDeserialize(bomb, out var exploded, out string capped, 1024 * 1024) && exploded == null &&
+            capped == "too_large", "An inflate beyond the cap is rejected as too_large, got " + capped);
+
+        string directory = Path.Combine(Path.GetTempPath(), "bp-minimap-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Check(MinimapCacheStore.TryStore(directory, entry, Limit, Limit, out long bytes, out string stored) && stored == "ok",
+                "Fixture store: " + stored);
+            Check(MinimapCacheStore.TryLoad(directory, KeyA, bytes, out var exact, out string atLimit) && exact != null,
+                "An entry exactly at the limit still loads: " + atLimit);
+            // Held open without sharing: only a size check can answer, a read would fail as unreadable.
+            string path = Path.Combine(directory, KeyA + ".bin");
+            using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Check(!MinimapCacheStore.TryLoad(directory, KeyA, bytes - 1, out var oversized, out string big) && oversized == null &&
+                    big == "too_large", "A file above the entry limit is rejected before it is read, got " + big);
+        }
+        finally { try { Directory.Delete(directory, true); } catch (IOException) { } }
     }
 
     private static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }

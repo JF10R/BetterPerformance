@@ -66,7 +66,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 status = "unavailable";
                 logger.LogWarning("Loot queue diagnostics unavailable: " + exception.GetType().Name);
             }
@@ -291,6 +291,6 @@ namespace BetterPerformance
             ClearInterval();
         }
 
-        internal static void Uninstall() { Patches.UnpatchSelf(); Reset(); status = "disabled"; }
+        internal static void Uninstall() { PatchRemoval.UnpatchOwned(Patches); Reset(); status = "disabled"; }
     }
 }

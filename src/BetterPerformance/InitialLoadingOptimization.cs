@@ -58,7 +58,7 @@ namespace BetterPerformance
             }
             catch (Exception error)
             {
-                Patches.UnpatchSelf(); Installed = false; Status = "unsupported_native_layout";
+                PatchRemoval.UnpatchOwned(Patches); Installed = false; Status = "unsupported_native_layout";
                 // The computed fingerprints are the one thing a log needs to explain a refusal.
                 string computed;
                 try { computed = "create=" + IlFingerprint.Compute(Create) + " poke=" + IlFingerprint.Compute(Poke); }
@@ -256,6 +256,6 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("initial_loading_extra_max_ms", extraMaxMs, "ms"));
         }
 
-        internal static void Uninstall() { Patches.UnpatchSelf(); Installed = false; episodeGame = null; }
+        internal static void Uninstall() { PatchRemoval.UnpatchOwned(Patches); Installed = false; episodeGame = null; }
     }
 }

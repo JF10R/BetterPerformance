@@ -436,7 +436,8 @@ def configuration_report(records):
 
 
 def bottleneck_report(records):
-    intervals = [r for r in records if r.get('kind') == 'interval']
+    # The final window (capture_end) carries the same context as an interval since 0.4.21.
+    intervals = [r for r in records if r.get('kind') in ('interval', 'capture_end')]
     if not intervals:
         return []
     rows = [named(r.get('gauges', [])) for r in intervals]
@@ -1069,6 +1070,11 @@ def engine_report(records):
                           f'{"yes" if marker in wrapped else "no"} |')
         output += ['', 'A wrapped ring lost frames; the engine does not report how many, so no dropped-frame '
                    'count is inferred and that marker\'s totals are lower bounds.', '']
+        coverage = [gauges['engine_marker_coverage_percent'] for gauges, _ in windows
+                    if numeric(gauges.get('engine_marker_coverage_percent'))]
+        if coverage:
+            output += [f'Ring coverage (player_loop samples over frames observed): lowest {min(coverage):.1f}%; '
+                       f'{sum(1 for value in coverage if value < 100)} of {len(coverage)} intervals below 100%.', '']
     if counters:
         output += ['| Counter | Min sample | Max sample | Last sample |', '| --- | ---: | ---: | ---: |']
         for name in sorted(counters):

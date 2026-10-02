@@ -45,6 +45,13 @@ internal static class SystemResourceTests
         Check(clocks.Count == 3 && clocks.CurrentAverage == 2000 && clocks.CurrentMin == 1200 &&
             clocks.MaxMhz == 4000 && clocks.LimitMin == 2400, "Clock summary keeps the average, minima and maximum.");
         Check(SystemResources.PagesToBytes(ulong.MaxValue, 4096) > 7e22, "Page conversion cannot overflow.");
+        var none = new VideoMemoryInfo();
+        var some = new VideoMemoryInfo { Budget = 8UL << 30, CurrentUsage = 1UL << 30 };
+        Check(DxgiVideoMemory.BudgetsPlausible(none, none, 0), "No dedicated memory: zero budgets are unavailable, not a fault.");
+        Check(!DxgiVideoMemory.BudgetsPlausible(none, some, 8UL << 30), "Dedicated memory with a zero local budget is a fault.");
+        Check(DxgiVideoMemory.BudgetsPlausible(some, some, 8UL << 30), "Positive budgets on a discrete adapter pass.");
+        Check(!DxgiVideoMemory.BudgetsPlausible(new VideoMemoryInfo { Budget = 1, CurrentUsage = 5 }, some, 8UL << 30),
+            "Usage far above the budget is a fault.");
         Check(SystemResources.AcLineLabel(0) == "offline" && SystemResources.AcLineLabel(1) == "online" &&
             SystemResources.AcLineLabel(255) == "unknown", "AC line labels follow SYSTEM_POWER_STATUS.");
         PowerSnapshot desktop = new PowerSnapshot { AcLine = 1, BatteryFlag = 128, BatteryPercent = 255 };
@@ -100,8 +107,9 @@ internal static class SystemResourceTests
         if (videoAvailable)
         {
             Check(video.TryQuery(out VideoMemoryInfo local, out VideoMemoryInfo nonLocal), "QueryVideoMemoryInfo must succeed.");
-            Check(local.Budget > 0 && nonLocal.Budget > 0 && local.CurrentUsage <= local.Budget * 4,
-                "Local and non-local budgets must be positive.");
+            Console.WriteLine("  dxgi budgets: local=" + local.Budget + " nonlocal=" + nonLocal.Budget + " usage=" + local.CurrentUsage);
+            Check(DxgiVideoMemory.BudgetsPlausible(local, nonLocal, video.DedicatedVideoMemory),
+                "An adapter with dedicated memory reports positive local and non-local budgets.");
             Check(video.DriverVersion != "unavailable" && video.AdapterMatch == "first_hardware_adapter",
                 "The driver version reads and the fallback match is labelled.");
             using var mismatched = DxgiVideoMemory.Open(0xFFFF, 0xFFFF);

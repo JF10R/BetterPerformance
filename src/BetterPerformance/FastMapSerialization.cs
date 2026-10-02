@@ -55,7 +55,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 Installed = Enabled = false;
                 Status = "unavailable";
                 logger.LogWarning("Fast map serialization unavailable; vanilla loops retained: " + exception.GetType().Name);
@@ -65,7 +65,7 @@ namespace BetterPerformance
         internal static void Uninstall()
         {
             Enabled = false;
-            Patches.UnpatchSelf();
+            PatchRemoval.UnpatchOwned(Patches);
             Installed = false;
             Status = "disabled";
         }

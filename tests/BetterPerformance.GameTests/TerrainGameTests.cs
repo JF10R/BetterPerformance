@@ -100,7 +100,12 @@ internal static class TerrainGameTests
             "attribution reports either an installed or an unavailable probe, never a silent partial install");
         if (attributionStatus.StartsWith("unavailable", StringComparison.Ordinal))
             Console.WriteLine("STATIC ONLY terrain attribution install: Heightmap cannot be type-loaded outside Unity");
+        Check(!attributionStatus.Contains("unpatch_failed"), "a refused install removes every hook it placed (actual=" + attributionStatus + ")");
         Method(attribution, "Uninstall").Invoke(null, null);
+        string cleared = (string?)attribution.GetProperty("Status", Declared)!.GetValue(null) ?? "";
+        Check(!cleared.Contains("unpatch_failed"), "Uninstall removes the hooks without an unpatch failure (actual=" + cleared + ")");
+        string retained = PatchOwnership.Retained(PatchOwnership.IdOf(attribution));
+        Check(retained == "none", "Uninstall leaves no method patched by this module (retained: " + retained + ")");
 
         Type number = plugin.GetType("BetterPerformance.Core.NumberValue", true)!;
         Type text = plugin.GetType("BetterPerformance.Core.TextValue", true)!;

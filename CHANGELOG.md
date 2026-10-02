@@ -1,5 +1,22 @@
 # Changelog
 
+### 0.4.21
+
+Fixes from an external audit, each checked against the code first. No gameplay decision changes.
+
+- Network compression: once installed, a received frame is always decoded. Before, eight caught exceptions, or the option turned off in game, also stopped decoding while the peer kept sending frames, which then reached the game raw (never observed). A failure now only stops this side offering and compressing. The receive hook reads the frame header in place instead of copying every packet (up to ~200 KB/s per peer). New gauges `net_compress_{compress,decode}_ms` and `_max_ms`.
+- Engine markers: the per-marker ring grows from 600 to 4,096 frames, enough for a 10 s export at about 400 fps. On the last 12 client segments, 19.4 % of intervals had overflowed and lost frames silently. New gauge `engine_marker_coverage_percent` (PlayerLoop samples over frames observed), shown in the report.
+- The last export of a capture (`capture_end`) now carries the same context as an interval: CPU, GC, memory, host, system and simulation figures, peers, socket queues and scene size. The report's incident and memory tables read it.
+- Heightmap rebuild budget: a burst's last frame is folded at the next export instead of the next burst, and a new capture no longer inherits the previous one's pending frame (`heightmap_budget_frame_spend_max_ms`, `_frames_over_budget`).
+- Fast portal arrival: when vanilla holds the screen past 8 s, the late-object baseline is recounted at the real end, so objects received after 8 s are no longer counted as late.
+- With `Capture.Enabled = false`, the network, ownership-expedite and sector-fix optimizations now still install when enabled, and the engine, system and frame-pacing recorders are no longer created (nothing reads them without capture). No deployed config has capture off.
+- Owner-grant expedite: a capture start resets its statistics only. It used to reset the per-second quota and the duplicate guard too, so the stop and restart at each 30-minute segment rotation could admit a duplicate or an extra forced send within that second.
+- The heightmap budget's final export folds the frame still open when a capture stops after the late update (plugin shutdown).
+- Module uninstall removes only the patches each module owns, one method at a time. Harmony's `UnpatchSelf` reads the body of every patched method in the process first, so one method that cannot load (seen in the offline contract harness) aborted it and left the module's later patches in place. In the game the end state is unchanged; plugin shutdown now logs a warning instead of throwing.
+- Tests: the compression fallback runs for real in the contract harness (a valid frame is decoded after the failure limit and with the option turned off live, while sending stops).
+- Caches: a biome or minimap cache file larger than `MaxEntryMiB` is refused before it is read, and minimap decompression stops at 256 MiB (the largest real entry is 36 MiB). The three minimap texture copies outside every stopwatch are timed (`minimap_cache_capture_ms`).
+- CI: the video-memory test accepts zero budgets on an adapter without dedicated memory (the GitHub runner's display-only Basic Render Driver), which had kept CI red since 0.4.20.
+
 ### 0.4.20
 
 - Fast portal arrival: never ends a teleport before the server has been sent the destination position (new blocker `server`, from `PositionJumpSync`'s send hook; without it, 2 s after the move). The settle check now counts from 0.3 s after that send and follows static objects only (pieces, trees, rocks, locations); creatures, item drops, projectiles, ragdolls, fish and birds are ignored.

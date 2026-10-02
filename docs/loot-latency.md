@@ -1,4 +1,4 @@
-# Experimental loot scheduling — 0.3.0
+# Experimental loot scheduling
 
 ### Validation status
 

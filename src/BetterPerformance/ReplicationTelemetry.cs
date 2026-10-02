@@ -89,7 +89,7 @@ namespace BetterPerformance
                 Status = "unavailable";
                 // A refused unpatch leaves inert hooks behind; it is reported, never
                 // propagated into the game's startup path.
-                try { Patches.UnpatchSelf(); } catch (Exception removal) { Status = "unpatch_failed:" + removal.GetType().Name; }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch (Exception removal) { Status = "unpatch_failed:" + removal.GetType().Name; }
                 logger.LogWarning("Replication cadence telemetry unavailable: " + exception.GetType().Name + ": " + exception.Message);
             }
         }
@@ -260,7 +260,7 @@ namespace BetterPerformance
             PrefabNames.Clear();
             zdosSent = null;
             Installed = false;
-            try { Patches.UnpatchSelf(); Status = "disabled"; }
+            try { PatchRemoval.UnpatchOwned(Patches); Status = "disabled"; }
             catch (Exception exception) { Status = "unpatch_failed:" + exception.GetType().Name; }
         }
     }

@@ -52,5 +52,15 @@ internal static class FrameStepWindowTests
         FrameStepSnapshot afterReset = window.Drain();
         Check(afterReset.FramesObserved == 0 && afterReset.FixedStepsTotal == 0 && afterReset.PendingFixedSteps == 0,
             "Reset at capture start must drop pre-capture frames and any partial frame.");
+
+        // The engine marker ring is drained once per poll: it must hold the longest poll the collector backs off to.
+        var cadence = new CollectorCadence(0.5);
+        for (int i = 0; i < 12; i++) cadence.Observe(CollectorCadence.SoftBudgetMs + 1);
+        Check(MarkerCoverage.RingCapacity >= cadence.IntervalSeconds * 300,
+            "A ring drained at the backoff ceiling must hold that interval at 300 fps.");
+        Check(MarkerCoverage.Percent(2700, 3000) == 90.0, "Coverage is drained samples over frames observed.");
+        Check(MarkerCoverage.Percent(3001, 3000) == 100.0, "A one-frame edge offset must not report over 100 %.");
+        Check(double.IsNaN(MarkerCoverage.Percent(5, 0)) && double.IsNaN(MarkerCoverage.Percent(-1, 3000)),
+            "No frame observed or no marker drained is unmeasured, never 0 or 100 %.");
     }
 }

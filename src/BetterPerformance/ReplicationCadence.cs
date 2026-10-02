@@ -430,7 +430,7 @@ namespace BetterPerformance
             bodyField = null;
             viewField = null;
             ZdoPeerAccess.Clear();
-            try { Patches.UnpatchSelf(); Status = "disabled"; }
+            try { PatchRemoval.UnpatchOwned(Patches); Status = "disabled"; }
             catch (Exception exception) { Status = "unpatch_failed:" + exception.GetType().Name; }
         }
     }

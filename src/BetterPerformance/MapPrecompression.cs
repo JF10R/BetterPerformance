@@ -86,7 +86,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                try { Patches.UnpatchSelf(); } catch { Interlocked.Increment(ref failures); }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { Interlocked.Increment(ref failures); }
                 Release("unavailable");
                 logger.LogWarning("Speculative map compression unavailable; native compression retained: "
                     + exception.GetType().Name + ": " + exception.Message);
@@ -372,7 +372,7 @@ namespace BetterPerformance
 
         internal static void Uninstall()
         {
-            try { Patches.UnpatchSelf(); } catch { Interlocked.Increment(ref failures); }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { Interlocked.Increment(ref failures); }
             Release("disabled");
             option = null;
         }

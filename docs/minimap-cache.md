@@ -49,6 +49,11 @@ plugin's version for that one patch (`minimap_cache_patch_fingerprint_fallback`)
   allocates, takes a field address, calls an unexpected type, or is already patched. Any
   runtime error disables the module and leaves native generation in place.
 - A failed or partial restore returns to native generation, which rewrites all three textures.
+- Load is bounded before allocation: a file above `MaxEntryMiB` is rejected on its size,
+  and inflation stops at 256 MiB (shipped formats cost at most 9 B/px: 36 MiB at 2048²). The cap is on
+  inflated content, not peak memory: the file, the copy buffer and the final array come on top.
+  On the serve path both report `load_failed` with `too_large` (the compare path reports
+  `miss`); an entry above a lowered `MaxEntryMiB` fails to load, as the store would now refuse it.
 - `m_explored`, `m_exploredOthers`, pins and fog are never touched.
 - Behavioural delta on a verified hit: `DeleteMapTextureData` and `SaveMapTextureDataToDisk`
   do not run, so the native cache files are left as they were. They are unreadable on a
@@ -64,7 +69,8 @@ Labels `minimap_cache_status`, `minimap_cache_mode`, `minimap_cache_result`
 (`miss` | `miss_unverified` | `shadow_match` | `shadow_mismatch` | `verified_hit` |
 `load_failed` | `store_failed` | `key_failed`), `minimap_cache_patch_fingerprint_fallback`
 (`true` when some patch fell back to the plugin version for the current key). Gauges `minimap_cache_native_ms`,
-`_load_ms`, `_compare_ms`, `_store_ms`, `_key_ms`, `_entry_bytes` (last serialized entry) and
+`_load_ms`, `_capture_ms` (copying the three textures out after native generation), `_compare_ms`,
+`_store_ms`, `_key_ms`, `_entry_bytes` (last serialized entry) and
 attempt/hit/mismatch/failure counters. One BepInEx line per generation.
 
 ## Validating on the disposable world

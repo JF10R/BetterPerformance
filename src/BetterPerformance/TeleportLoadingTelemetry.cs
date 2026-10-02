@@ -69,7 +69,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 Installed = Enabled = false;
                 Status = "unavailable";
                 logger.LogWarning("Teleport loading telemetry unavailable: " + exception.GetType().Name);
@@ -303,7 +303,7 @@ namespace BetterPerformance
 
         internal static void Uninstall()
         {
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Installed = Enabled = false;
             Status = "disabled";
             Reset();

@@ -117,7 +117,9 @@ namespace BetterPerformance.Core
             return true;
         }
 
-        public static bool TryLoad(string directory, string key, out BiomeCacheEntry? entry, out string failure)
+        // maxEntryBytes is the store's own per-entry limit, checked on the file size before
+        // a byte is read: no entry above it could have been written by TryStore.
+        public static bool TryLoad(string directory, string key, long maxEntryBytes, out BiomeCacheEntry? entry, out string failure)
         {
             entry = null;
             if (string.IsNullOrEmpty(directory) || !IsKey(key)) { failure = "invalid_request"; return false; }
@@ -126,6 +128,7 @@ namespace BetterPerformance.Core
             try
             {
                 if (!File.Exists(path)) { failure = "missing"; return false; }
+                if (new FileInfo(path).Length > maxEntryBytes) { failure = "too_large"; return false; }
                 file = File.ReadAllBytes(path);
             }
             catch (FileNotFoundException) { failure = "missing"; return false; }

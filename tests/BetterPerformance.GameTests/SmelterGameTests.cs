@@ -125,11 +125,11 @@ internal static class SmelterGameTests
             Check(labelNames.Contains(name), name + " is exported");
 
         reflected.GetMethod("Uninstall", PrivateStatic)!.Invoke(null, null);
-        // A standalone CLR can throw inside Harmony's unpatch rescan (an unrelated Unity type), which
-        // the module reports as unpatch_failed rather than hiding; in the game it reads disabled.
+        // This process holds patches whose bodies this CLR cannot load; removal must not depend on them.
         string after = (string)reflected.GetProperty("Status", PrivateStatic)!.GetValue(null)!;
-        Check(after == "disabled" || after.StartsWith("unpatch_failed:"), "Uninstall returns Status to disabled or reports the unpatch failure (actual=" + after + ")");
-        if (after != "disabled") Console.WriteLine("STATIC ONLY smelter telemetry unpatch: " + after + " on this CLR; contract checks above still ran");
+        Check(after == "disabled", "Uninstall returns Status to disabled (actual=" + after + ")");
+        string retained = PatchOwnership.Retained(PatchOwnership.IdOf(reflected));
+        Check(retained == "none", "Uninstall leaves no method patched by this module (retained: " + retained + ")");
         Console.WriteLine("Smelter telemetry: " + checks + " checks; this module makes no throughput or product-parity claim.");
         return checks;
     }

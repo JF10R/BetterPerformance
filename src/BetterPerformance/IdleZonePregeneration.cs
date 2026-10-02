@@ -104,7 +104,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                try { Patches.UnpatchSelf(); } catch { }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { }
                 Release("unavailable");
                 logger.LogWarning("Idle zone pre-generation unavailable; native generation only: " + exception.GetType().Name + ": " + exception.Message);
             }
@@ -477,7 +477,7 @@ namespace BetterPerformance
             }
             RemoveFrameStamp();
             StampPlacement = "none";
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Reset();
             Release("disabled");
             world = null;

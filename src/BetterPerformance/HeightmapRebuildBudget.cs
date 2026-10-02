@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using BetterPerformance.Core;
@@ -32,9 +33,11 @@ namespace BetterPerformance
         private static long[] firstSeen = new long[64];
         private static int[] order = new int[64];
         private static int plannedFrame = -1, optionalRan;
-        private static double frameSpentMs, allowanceMs = double.MaxValue, costEstimateMs = InitialCostMs;
-        private static long rebuildsRun, deferred, demoted, overdue, critical, budgeted, plannedFrames, framesOverBudget, failures;
-        private static double maxDeferralMs, frameSpentMaxMs, planMsMax, acrossReloadMaxMs;
+        private static double allowanceMs = double.MaxValue, costEstimateMs = InitialCostMs;
+        // This frame's measured spend; its last frame is folded at the next plan or sample.
+        private static readonly HeightmapFrameSpend Spend = new HeightmapFrameSpend();
+        private static long rebuildsRun, deferred, demoted, overdue, critical, budgeted, plannedFrames, failures;
+        private static double maxDeferralMs, planMsMax, acrossReloadMaxMs;
         private static long acrossReload;
         private static int queuePeak;
         // Observer of the critical rebuilds (where, cost, context); read-only beside the plan.
@@ -98,7 +101,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                try { Patches.UnpatchSelf(); } catch { failures++; }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { failures++; }
                 Installed = Enabled = false;
                 Status = "patch_failed";
                 logger.LogWarning("Heightmap rebuild budget could not patch Heightmap.CustomLateUpdate: " + exception.GetType().Name);
@@ -172,7 +175,7 @@ namespace BetterPerformance
                     {
                         // The plan used an estimate; the measured spend has the last word, but
                         // never over the one optional rebuild that keeps the queue moving.
-                        if (optionalRan > 0 && frameSpentMs >= allowanceMs)
+                        if (optionalRan > 0 && Spend.Ms >= allowanceMs)
                         {
                             entry.Run = false;
                             entries[map.GetInstanceID()] = entry;
@@ -196,7 +199,7 @@ namespace BetterPerformance
             {
                 double elapsed = (Stopwatch.GetTimestamp() - __state) * 1000.0 / Stopwatch.Frequency;
                 rebuildsRun++;
-                frameSpentMs += elapsed;
+                Spend.Add(elapsed);
                 if (elapsed >= 0 && elapsed < 1000) costEstimateMs = Math.Max(0.1, costEstimateMs + 0.2 * (elapsed - costEstimateMs));
                 int id = __instance.GetInstanceID();
                 if (!entries.TryGetValue(id, out Entry entry)) return;
@@ -213,10 +216,8 @@ namespace BetterPerformance
 
         private static void PlanFrame(int frame)
         {
-            if (plannedFrame >= 0 && frameSpentMs > (budgetMs?.Value ?? 4f)) framesOverBudget++;
-            if (frameSpentMs > frameSpentMaxMs) frameSpentMaxMs = frameSpentMs;
+            Spend.Open(frame, budgetMs?.Value ?? 4f);
             plannedFrame = frame;
-            frameSpentMs = 0;
             optionalRan = 0;
             allowanceMs = double.MaxValue;
             framePlanned = false;
@@ -354,8 +355,18 @@ namespace BetterPerformance
             return Enabled;
         }
 
+        // The capture's final export: it can run after this frame's late batch (plugin shutdown), so the
+        // frame still marked current is complete too and is folded before sampling.
+        internal static void Finish(List<NumberValue> gauges, List<TextValue> labels)
+        {
+            Spend.Close(budgetMs?.Value ?? 4f);
+            Sample(gauges, labels);
+        }
+
         internal static void Sample(List<NumberValue> gauges, List<TextValue> labels)
         {
+            // Sampling runs in Update, never inside the late batch: the burst's last frame is complete.
+            if (Spend.Pending) Spend.CloseBefore(CurrentFrame(), budgetMs?.Value ?? 4f);
             gauges.Add(new NumberValue("heightmap_budget_rebuilds_run", Take(ref rebuildsRun), "rebuilds"));
             gauges.Add(new NumberValue("heightmap_budget_deferred", Take(ref deferred), "decisions"));
             gauges.Add(new NumberValue("heightmap_budget_demoted_measured", Take(ref demoted), "decisions"));
@@ -363,16 +374,16 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("heightmap_budget_critical", Take(ref critical), "rebuilds"));
             gauges.Add(new NumberValue("heightmap_budget_budgeted", Take(ref budgeted), "rebuilds"));
             gauges.Add(new NumberValue("heightmap_budget_planned_frames", Take(ref plannedFrames), "frames"));
-            gauges.Add(new NumberValue("heightmap_budget_frames_over_budget", Take(ref framesOverBudget), "frames"));
+            gauges.Add(new NumberValue("heightmap_budget_frames_over_budget", Spend.TakeFramesOverBudget(), "frames"));
             gauges.Add(new NumberValue("heightmap_budget_max_deferral_ms", Math.Round(maxDeferralMs, 3), "ms"));
             gauges.Add(new NumberValue("heightmap_budget_age_across_reload", Take(ref acrossReload), "rebuilds"));
             gauges.Add(new NumberValue("heightmap_budget_age_across_reload_max_ms", Math.Round(acrossReloadMaxMs, 3), "ms"));
-            gauges.Add(new NumberValue("heightmap_budget_frame_spend_max_ms", Math.Round(frameSpentMaxMs, 3), "ms"));
+            gauges.Add(new NumberValue("heightmap_budget_frame_spend_max_ms", Math.Round(Spend.TakeMaxMs(), 3), "ms"));
             gauges.Add(new NumberValue("heightmap_budget_plan_ms_max", Math.Round(planMsMax, 3), "ms"));
             gauges.Add(new NumberValue("heightmap_budget_queue_peak", queuePeak, "heightmaps"));
             gauges.Add(new NumberValue("heightmap_budget_cost_estimate_ms", Math.Round(costEstimateMs, 3), "ms"));
             gauges.Add(new NumberValue("heightmap_budget_probe_failures", Take(ref failures), "calls"));
-            maxDeferralMs = frameSpentMaxMs = planMsMax = acrossReloadMaxMs = 0;
+            maxDeferralMs = planMsMax = acrossReloadMaxMs = 0;
             queuePeak = 0;
             CriticalProfile.Sample(gauges);
             labels.Add(new TextValue("heightmap_budget_status", Status));
@@ -381,6 +392,10 @@ namespace BetterPerformance
             labels.Add(new TextValue("heightmap_budget_critical_observer",
                 !Installed ? "not_installed" : enableLogInstalled ? "installed" : "installed_without_enable_age"));
         }
+
+        // Separate method: Unity's Time cannot load in the contract harness, which still calls Sample.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static int CurrentFrame() => Time.frameCount;
 
         private static long Take(ref long counter)
         {
@@ -391,9 +406,12 @@ namespace BetterPerformance
 
         internal static void Reset()
         {
-            rebuildsRun = deferred = demoted = overdue = critical = budgeted = plannedFrames = framesOverBudget = failures = acrossReload = 0;
-            maxDeferralMs = frameSpentMaxMs = planMsMax = acrossReloadMaxMs = 0;
+            rebuildsRun = deferred = demoted = overdue = critical = budgeted = plannedFrames = failures = acrossReload = 0;
+            maxDeferralMs = planMsMax = acrossReloadMaxMs = 0;
             queuePeak = 0;
+            // Runs from StartCapture in Update, outside the late batch: the spend is never read
+            // again before the next plan zeroes it, so dropping it here changes no decision.
+            Spend.Reset();
             CriticalProfile.Reset();
         }
 
@@ -406,10 +424,9 @@ namespace BetterPerformance
             entries.Clear();
             spare.Clear();
             plannedFrame = -1;
-            frameSpentMs = 0;
             costEstimateMs = InitialCostMs;
             Reset();
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             option = null;
             budgetMs = criticalRadius = maxDeferMs = null;
         }

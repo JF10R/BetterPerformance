@@ -116,7 +116,7 @@ namespace BetterPerformance
             {
                 Installed = Enabled = false;
                 Status = "unavailable";
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 logger.LogWarning("Attribution telemetry unavailable: " + exception.GetType().Name);
             }
         }
@@ -732,7 +732,7 @@ namespace BetterPerformance
             Installed = false;
             // Removal must not throw into the game's shutdown path; a refused unpatch
             // leaves inert hooks behind and is reported instead of propagating.
-            try { Patches.UnpatchSelf(); Status = "disabled"; }
+            try { PatchRemoval.UnpatchOwned(Patches); Status = "disabled"; }
             catch (Exception exception) { Status = "unpatch_failed:" + exception.GetType().Name; }
         }
     }

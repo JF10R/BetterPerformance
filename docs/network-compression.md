@@ -18,7 +18,9 @@ magic, the declared length, and a Deflate stream that must inflate to exactly th
 
 Decoding is therefore unconditional and stateless. The `Recv` postfix tries `TryDecode` on any
 framed payload, on every Steam socket, whatever the peer sent before: nothing to arm, and no
-ordering rule to get wrong.
+ordering rule to get wrong. It is gated on the patch being installed and nothing else: after 8
+hook exceptions, or with the option turned off live, this side stops offering and encoding but
+keeps decoding, because the peer keeps sending frames.
 
 Sending turns on per direction, on the offer alone. On each new connection both sides register
 `BP_NetCompressOffer` (int version) on the peer's `ZRpc` and send an offer carrying version 1.
@@ -32,9 +34,12 @@ mismatch degrades to vanilla traffic rather than to garbage.
 ## Cost
 
 Deflate at Fastest over the roughly 1-10 KB packets Valheim sends about 20 times a second per
-peer, plus one array copy per decoded message. The send prefix rotates the queue once and
-encodes each array exactly once, tracked by reference in a per-socket set cleared when the
-queue empties. No CPU or ratio figure is claimed here; the capture holds it.
+peer. The receive hook reads the frame header in place in the package's stream buffer, so an
+unframed packet is not copied; only a frame is inflated and rebuilt into a new `ZPackage`. If
+`ZPackage.m_stream` ever stops being an exposable `MemoryStream`, it falls back to one
+`GetArray` copy per packet. The send prefix rotates the queue once and encodes each array
+exactly once, tracked by reference in a per-socket set cleared when the queue empties. No CPU
+or ratio figure is claimed here; the capture holds it.
 
 ## Telemetry
 
@@ -46,9 +51,13 @@ queue empties. No CPU or ratio figure is claimed here; the capture holds it.
 | `net_compress_compress_kept_raw` | Packets Deflate could not shrink, sent unchanged. A large share means dense payloads. |
 | `net_compress_decode_packets`, `net_compress_decode_raw_bytes`, `net_compress_decode_wire_bytes` | The inbound mirror of the three above, read the same way. |
 | `net_compress_unframed_received` | Raw packets received from a peer that did offer. Normal for its incompressible packets; a steady high share says that peer compresses almost nothing. |
-| `net_compress_decode_failures`, `net_compress_failures` | Framed headers that would not decode, which is a bug or a raw payload starting with the magic, and hook exceptions. The undecodable packet passes through untouched; after 8 exceptions the module disables itself and the status reads `failed`. |
+| `net_compress_decode_failures`, `net_compress_failures` | Framed headers that would not decode, which is a bug or a raw payload starting with the magic, and hook exceptions. The undecodable packet passes through untouched; after 8 exceptions the module stops offering and encoding, keeps decoding, and the status reads `failed`. |
+| `net_compress_compress_ms`, `net_compress_compress_max_ms` | Elapsed time in the send prefix's encoding pass, summed and worst single flush per export. The module's own CPU cost on the send side. |
+| `net_compress_decode_ms`, `net_compress_decode_max_ms` | Elapsed time inflating and rebuilding framed packets, summed and worst single packet per export. The in-place header test on raw packets is not timed, nor is Harmony dispatch: the hooks cost more than these two gauges. |
 
 Labels: `net_compress_status`, `net_compress_enabled`, `net_compress_version`, `net_compress_scope`.
+A status of `failed` or `installed_disabled` (option turned off live) means sending is stopped
+and decoding continues; `net_compress_enabled` reads `false` in both.
 
 ## Contract check and coexistence
 
@@ -61,7 +70,8 @@ method handing each `m_sendQueue` entry to `SendMessageToConnection`, `Recv` bui
 `Recv`. Per-socket state is dropped on `ZNet.Disconnect` and swept on every export.
 `NetworkCompressionGameTests` asserts all of it from Mono.Cecil metadata, because
 `ZSteamSocket` cannot be type-loaded by a standalone CLR, and asserts that the receive hook
-reaches no per-socket state before the framing test.
+reaches no per-socket state before the framing test and reads no flag that a failure or the
+option can clear.
 
 ## What not to do
 

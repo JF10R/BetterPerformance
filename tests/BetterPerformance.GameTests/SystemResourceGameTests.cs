@@ -88,6 +88,13 @@ internal static class SystemResourceGameTests
         foreach (string name in AbsentFromRelease)
             Check(!Contains(binary, Encoding.ASCII.GetBytes(name)),
                 "\"" + name + "\" is now in UnityPlayer.dll: request it in EngineTelemetry and update docs/system-resource-telemetry.md");
+
+        // 5. Engine marker rings hold a 10 s poll at 400 fps; coverage is PlayerLoop samples over frames observed.
+        Check(Require(pluginModule, "BetterPerformance.EngineTelemetry").Methods.Where(m => m.Name == "Create" && m.HasBody)
+            .SelectMany(m => m.Body.Instructions).Any(i => i.OpCode == Cil.OpCodes.Ldc_I4 && i.Operand is int n && n == 4096),
+            "EngineTelemetry.Create sizes marker recorders at 4096 frames");
+        Check(literals.Contains("engine_marker_coverage_percent") && literals.Contains("PlayerLoop"),
+            "EngineTelemetry exports engine_marker_coverage_percent from the PlayerLoop marker");
         Console.WriteLine("PASS System resources: " + checks + " checks from metadata and UnityPlayer.dll; native reads are covered offline");
         return checks;
     }

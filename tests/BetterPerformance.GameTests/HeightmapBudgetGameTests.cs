@@ -170,6 +170,16 @@ internal static class HeightmapBudgetGameTests
                 (i.Operand as FieldReference)?.Name == "m_doLateUpdate") &&
             !module.Methods.Any(m => m.HasBody && m.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Name == "Regenerate")),
             "the module never writes the flag and never calls Regenerate itself");
+        // The frame-spend gauges: the sample folds the burst's last frame before exporting, and Reset drops it.
+        int CallIndex(MethodDefinition method, string name) => method.Body.Instructions.ToList().FindIndex(i =>
+            i.Operand is MethodReference m && m.DeclaringType.Name == "HeightmapFrameSpend" && m.Name == name);
+        MethodDefinition sample = module.Methods.Single(m => m.Name == "Sample");
+        int fold = CallIndex(sample, "CloseBefore");
+        Check(fold >= 0 && fold < CallIndex(sample, "TakeFramesOverBudget") && fold < CallIndex(sample, "TakeMaxMs"),
+            "Sample folds the open frame before exporting frames_over_budget and frame_spend_max_ms");
+        Check(CallIndex(module.Methods.Single(m => m.Name == "Reset"), "Reset") >= 0, "Reset drops the open frame spend");
+        Check(CallIndex(module.Methods.Single(m => m.Name == "Finish"), "Close") >= 0,
+            "the final export folds the frame still marked current (stop after the late batch)");
 
         // 9. Default configuration installs nothing and patches nothing.
         Type reflected = plugin.GetType("BetterPerformance.HeightmapRebuildBudget", true)!;

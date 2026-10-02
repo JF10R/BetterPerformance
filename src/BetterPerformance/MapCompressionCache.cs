@@ -50,7 +50,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf(); Installed = Enabled = false; Status = "unavailable";
+                PatchRemoval.UnpatchOwned(Patches); Installed = Enabled = false; Status = "unavailable";
                 logger.LogWarning("Map compression cache unavailable: " + exception.GetType().Name);
             }
         }
@@ -204,6 +204,6 @@ namespace BetterPerformance
             return true;
         }
         internal static void Clear() { Cache.Clear(); primed = false; world = null; }
-        internal static void Uninstall() { Enabled = false; Patches.UnpatchSelf(); Installed = false; Clear(); }
+        internal static void Uninstall() { Enabled = false; PatchRemoval.UnpatchOwned(Patches); Installed = false; Clear(); }
     }
 }

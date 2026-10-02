@@ -27,6 +27,14 @@ class BottleneckReportTests(unittest.TestCase):
         self.assertIn('CharacterSave=50.00', report)
         self.assertNotIn('CharacterSave=100', report)
 
+    def test_final_window_counts(self):
+        rows = [{'kind': 'interval', 'utc': 'w0', 'gauges': [dict(name='process_private_commit', value=1048576)]},
+                {'kind': 'capture_end', 'utc': 'end', 'gauges': [dict(name='process_private_commit', value=3145728)],
+                 'timings': [dict(name='LoopInterval', count=1, maxMs=250)]}]
+        report = '\n'.join(summary.bottleneck_report(rows))
+        self.assertIn('| process_private_commit | 1.00 | 3.00 | 3.00 | 2.00 |', report)
+        self.assertIn('| end |', report)
+
     def test_does_not_invent_intervals(self):
         self.assertEqual([], summary.bottleneck_report([{'kind': 'start'}]))
 

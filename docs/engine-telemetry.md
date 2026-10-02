@@ -75,8 +75,13 @@ Every requested metric carries its own label `engine_marker_<name>` with value `
 resolved once at startup against the installed player; a metric absent then stays absent for the session.
 
 Headless captures (a `Null` graphics device, that is the dedicated server) skip rendering-only metrics.
-Each timing recorder keeps the last 600 frames. A poll longer than that loses frames; the recorder reports that it
-wrapped, exported as `engine_<marker>_wrapped`, but the engine does not report how many frames were lost, so no
-dropped-frame count is estimated.
+Each timing recorder keeps the last 4096 frames (0.4.21; 600 before), enough for the collector's 10 s backoff
+ceiling at 400 fps; a full ring is 4096 × 24-byte samples (96 KiB, 0.94 MiB for the ten markers). A poll longer than that loses frames; the recorder
+reports that it wrapped, exported as `engine_<marker>_wrapped`, but not how many. `engine_marker_coverage_percent`
+gives the share kept for `player_loop` only: its drained samples over `frames_observed`, capped at 100, absent when
+either is unmeasured. Other markers are not covered by it. 4096 frames is a margin, not a guarantee: a longer
+gap still wraps, so keep reading `_wrapped` beside the coverage. GPU frame time stays a sparse sample.
+With `Capture.Enabled = false` at startup the recorders are not created (0.4.21). After `bp_capture stop`
+they keep running, because the post-arrival window still reads them; that residual cost is not measured.
 
 These are elapsed scope times, not charged CPU time, and the cost of the recorders themselves is not measured.

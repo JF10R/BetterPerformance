@@ -2,7 +2,7 @@
 
 Performance diagnostics and experimental, measurable optimizations for Valheim clients and dedicated servers.
 
-**Status: experimental plugin, version 0.4.20, verified against Valheim 1.0.16 (2026-10-01). Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
+**Status: experimental plugin, version 0.4.21, verified against Valheim 1.0.16 (2026-10-01). Diagnostics are enabled by default; optimization options are disabled by default. Independent package-copy and exact-map-compression-cache modules extend bulk map serialization. Normal gameplay gains remain workload-dependent; see the implementation and runtime reports.**
 
 ### TL;DR: what it improves and who benefits
 
@@ -67,9 +67,9 @@ An optional soft time budget spreads scene object creation across frames, with a
 
 ### Relationship to other mods
 
-BetterPerformance is an independent project. It is intended to work alongside ValheimPlus, without requiring it.
+BetterPerformance is an independent project and depends on no other mod. It is tested alongside ValheimPlus, without requiring it; broader compatibility remains unvalidated.
 
-The diagnostics phase is intended to coexist with BetterNetworking. Queue measurements explicitly retain its adjusted socket results. A possible later networking module may reuse and improve BetterNetworking's implementation; if that happens, overlapping networking patches must not run simultaneously. No BetterNetworking code is included. Isolated headless runs with BetterNetworking 2.3.3 and ValheimPlus 0.10.1.1/0.10.1.2 completed; broader compatibility remains unvalidated.
+The network modules replace BetterNetworking, which is no longer needed; they yield if it is still loaded. No BetterNetworking code is included.
 
 ### Documentation
 
@@ -78,13 +78,13 @@ Project documentation only: guides, each optimization module, and each telemetry
 - [Capture guide](docs/capture-guide.md)
 - [Real-session diagnostics](docs/play-session.md)
 - [Measurement scope](docs/measurements.md)
-- [Configuration history and diagnostic interpretation — 0.3.3](docs/configuration-history.md)
+- [Configuration history and diagnostic interpretation](docs/configuration-history.md)
 - [Repeated-test protocol](docs/repeated-tests.md)
 - [Updating the plugin after a Valheim update](docs/game-update-guide.md)
 - [Experimental object-creation budget](docs/object-budget.md)
 - [Creation allowance after near preparation](docs/budget-preparation.md)
 - [Experimental initial loading acceleration](docs/initial-loading.md)
-- [Experimental loot scheduling — 0.3.0](docs/loot-latency.md)
+- [Experimental loot scheduling](docs/loot-latency.md)
 - [Minimap texture cache](docs/minimap-cache.md)
 - [Biome point cache](docs/biome-point-cache.md)
 - [Steam cloud write buffer](docs/cloud-write-optimization.md)

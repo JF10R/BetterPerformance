@@ -79,6 +79,9 @@ namespace BetterPerformance.Core
     {
         public const int FormatVersion = 1;
         public const string Extension = ".bin";
+        // Inflated-size ceiling. Shipped formats cost at most 9 B/px (RGB24 + RGBA32 mask
+        // fallback + RHalf): 36 MiB at 2048², 144 MiB at 4096². A gzip bomb stops here.
+        public const long MaxPayloadBytes = 256L * 1024 * 1024;
         private static readonly byte[] Magic = Encoding.ASCII.GetBytes("BPMINIMAP");
 
         public static bool IsKey(string key)
@@ -137,7 +140,8 @@ namespace BetterPerformance.Core
             }
         }
 
-        public static bool TryDeserialize(byte[]? file, out MinimapCacheEntry? entry, out string failure)
+        public static bool TryDeserialize(byte[]? file, out MinimapCacheEntry? entry, out string failure,
+            long maxPayloadBytes = MaxPayloadBytes)
         {
             entry = null;
             if (file == null || file.Length <= Magic.Length) { failure = "truncated"; return false; }
@@ -152,7 +156,13 @@ namespace BetterPerformance.Core
                 using (var compressed = new GZipStream(source, CompressionMode.Decompress))
                 using (var plain = new MemoryStream())
                 {
-                    compressed.CopyTo(plain);
+                    var chunk = new byte[81920];
+                    int read;
+                    while ((read = compressed.Read(chunk, 0, chunk.Length)) > 0)
+                    {
+                        if (plain.Length + read > maxPayloadBytes) { failure = "too_large"; return false; }
+                        plain.Write(chunk, 0, read);
+                    }
                     payload = plain.ToArray();
                 }
                 using (var body = new MemoryStream(payload, false))
@@ -260,7 +270,9 @@ namespace BetterPerformance.Core
             return files;
         }
 
-        public static bool TryLoad(string directory, string key, out MinimapCacheEntry? entry, out string failure)
+        // maxEntryBytes is the store's own per-entry limit, checked on the file size before
+        // a byte is read: no entry above it could have been written by TryStore.
+        public static bool TryLoad(string directory, string key, long maxEntryBytes, out MinimapCacheEntry? entry, out string failure)
         {
             entry = null;
             if (string.IsNullOrEmpty(directory) || !IsKey(key)) { failure = "invalid_request"; return false; }
@@ -269,6 +281,7 @@ namespace BetterPerformance.Core
             try
             {
                 if (!File.Exists(path)) { failure = "missing"; return false; }
+                if (new FileInfo(path).Length > maxEntryBytes) { failure = "too_large"; return false; }
                 file = File.ReadAllBytes(path);
             }
             catch (IOException) { failure = "unreadable"; return false; }

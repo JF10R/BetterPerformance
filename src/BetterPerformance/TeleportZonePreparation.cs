@@ -61,7 +61,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 PrefetchInstalled = BurstEnabled = false;
                 Status = "unavailable";
                 logger.LogWarning("Teleport zone preparation unavailable: " + exception.GetType().Name + ": " + exception.Message);
@@ -140,7 +140,7 @@ namespace BetterPerformance
 
         internal static void Uninstall()
         {
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             PrefetchInstalled = BurstEnabled = false;
             Status = "disabled";
             teleporting = distantTeleport = null;

@@ -144,7 +144,7 @@ namespace BetterPerformance
                 Status = LegsStatus = "unavailable";
                 tracker = null;
                 rockAllDestroyed = null;
-                try { Patches.UnpatchSelf(); } catch { failures++; }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { failures++; }
                 logger.LogWarning("Loot visibility diagnostics unavailable; native behaviour retained: " +
                     exception.GetType().Name + ": " + exception.Message);
                 return;
@@ -984,7 +984,7 @@ namespace BetterPerformance
             Reset();
             failures = legFailures = 0;
             installedRadius = installedWindowMs = 0;
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             tracker = null;
             ownerLeg = serverLeg = null;
             hitAreasField = areaColliderField = null;

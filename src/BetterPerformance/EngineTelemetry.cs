@@ -19,7 +19,7 @@ namespace BetterPerformance
     // Availability is a runtime fact; every requested metric carries its own status label.
     internal static class EngineTelemetry
     {
-        private const int MarkerCapacity = 600;
+        private const int MarkerCapacity = MarkerCoverage.RingCapacity;
         private const int MaxHandlesScanned = 8192;
 
         private enum ProbeKind { Marker, Counter }
@@ -102,6 +102,8 @@ namespace BetterPerformance
         private static readonly FrameStepWindow Window = new FrameStepWindow();
         // Counters read per frame by the post-arrival window, resolved once so that path does no name lookup.
         private static readonly Probe MainThread = Find("CPU Main Thread Frame Time")!, Gpu = Find("GPU Frame Time")!;
+        // One main-thread sample per completed frame: its drained count against frames_observed is the ring coverage.
+        private static readonly Probe FrameMarker = Find("PlayerLoop")!;
         private static AccessTools.FieldRef<GraphicsSettingsManager, bool>? inBackground;
         private static readonly List<ProfilerRecorderSample> Scratch = new List<ProfilerRecorderSample>(MarkerCapacity);
         private static ProfilerRecorder[] recorders = Array.Empty<ProfilerRecorder>();
@@ -257,11 +259,11 @@ namespace BetterPerformance
             if (enabled && Thread.CurrentThread.ManagedThreadId != installThread) pollStatus = "wrong_thread";
             labels.Add(new TextValue("engine_markers_status", pollStatus));
             labels.Add(new TextValue("engine_markers_scope",
-                "per_completed_frame_samples_summed_within_frame; ring_600_frames_wrap_drop_count_unknown; elapsed_not_charged_cpu; gpu_counter_overhead_unmeasured"));
+                "per_completed_frame_samples_summed_within_frame; ring_4096_frames; coverage_player_loop_samples_over_frames_observed_capped_100; elapsed_not_charged_cpu; gpu_counter_overhead_unmeasured"));
             labels.Add(new TextValue("engine_fixed_step_scope",
                 "counted_from_plugin_update_callbacks_only; steps_attributed_to_the_following_frame; engine_settings_read_only"));
             if (pollStatus != "enabled" && pollStatus != "headless") return;
-            long available = 0;
+            long available = 0, frameSamples = -1;
             foreach (var probe in Probes)
             {
                 labels.Add(new TextValue(probe.LabelName, probe.Status));
@@ -269,8 +271,12 @@ namespace BetterPerformance
                 available++;
                 try
                 {
-                    if (probe.Kind == ProbeKind.Marker) ReadMarker(probe, gauges);
-                    else ReadCounter(probe, gauges);
+                    if (probe.Kind != ProbeKind.Marker) ReadCounter(probe, gauges);
+                    else
+                    {
+                        long drained = ReadMarker(probe, gauges);
+                        if (ReferenceEquals(probe, FrameMarker)) frameSamples = drained;
+                    }
                 }
                 catch
                 {
@@ -282,11 +288,15 @@ namespace BetterPerformance
             }
             gauges.Add(new NumberValue("engine_markers_available", available, "metrics"));
             gauges.Add(new NumberValue("engine_markers_scanned", handlesScanned, "handles"));
-            SampleSteps(gauges);
+            long frames = SampleSteps(gauges);
+            // Both sides drain in this call, so their interval edges match; absent when either is unmeasured.
+            double coverage = MarkerCoverage.Percent(frameSamples, frames);
+            if (!double.IsNaN(coverage)) gauges.Add(new NumberValue("engine_marker_coverage_percent", coverage, "%"));
             SampleEngineSettings(gauges, labels);
         }
 
-        private static void ReadMarker(Probe probe, List<NumberValue> gauges)
+        // Returns the frames exported for this interval.
+        private static long ReadMarker(Probe probe, List<NumberValue> gauges)
         {
             bool wrapped = recorders[probe.Index].WrappedAround;
             Scratch.Clear();
@@ -308,6 +318,7 @@ namespace BetterPerformance
             gauges.Add(new NumberValue(probe.MaxName, max, probe.Unit));
             // The ring reports that it overflowed; it cannot report how many frames were lost.
             if (wrapped) gauges.Add(new NumberValue(probe.WrappedName, 1, "intervals"));
+            return count;
         }
 
         private static void ReadCounter(Probe probe, List<NumberValue> gauges)
@@ -317,7 +328,7 @@ namespace BetterPerformance
             gauges.Add(new NumberValue(probe.ValueName, value, probe.Unit));
         }
 
-        private static void SampleSteps(List<NumberValue> gauges)
+        private static long SampleSteps(List<NumberValue> gauges)
         {
             FrameStepSnapshot observed = Window.Drain();
             gauges.Add(new NumberValue("frames_observed", observed.FramesObserved, "frames"));
@@ -326,6 +337,7 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("frames_with_multiple_fixed_steps", observed.FramesWithMultipleFixedSteps, "frames"));
             gauges.Add(new NumberValue("frames_without_fixed_step", observed.FramesWithoutFixedStep, "frames"));
             gauges.Add(new NumberValue("fixed_steps_pending", observed.PendingFixedSteps, "steps"));
+            return observed.FramesObserved;
         }
 
         private static void SampleEngineSettings(List<NumberValue> gauges, List<TextValue> labels)

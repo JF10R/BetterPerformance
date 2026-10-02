@@ -48,7 +48,7 @@ namespace BetterPerformance
         private static string? pendingKey;
         private static long nativeStarted;
         private static long attempts, verifiedHits, shadowMatches, shadowMismatches, loadFailures, storeFailures, keyFailures;
-        private static double nativeMs, loadMs, compareMs, storeMs, keyMs;
+        private static double nativeMs, loadMs, captureMs, compareMs, storeMs, keyMs;
         private static long entryBytes;
         private static bool patchFingerprintFallback;
 
@@ -86,7 +86,7 @@ namespace BetterPerformance
             }
             catch (Exception error)
             {
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 Installed = false;
                 Status = "unsupported_native_layout";
                 logger.LogWarning("Minimap texture cache unavailable; native generation retained: " + error.GetType().Name + " " + error.Message);
@@ -433,7 +433,7 @@ namespace BetterPerformance
         private static bool TryServe(string key, Texture2D map, Texture2D mask, Texture2D heights)
         {
             long started = Stopwatch.GetTimestamp();
-            bool loaded = MinimapCacheStore.TryLoad(directory, key, out var entry, out string failure);
+            bool loaded = MinimapCacheStore.TryLoad(directory, key, EntryLimit, out var entry, out string failure);
             if (!loaded || entry == null)
             {
                 loadMs += Since(started);
@@ -487,15 +487,18 @@ namespace BetterPerformance
             busy = true;
             try
             {
+                // GetRawTextureData copies all three textures into managed arrays: its own span.
+                long started = Stopwatch.GetTimestamp();
                 if (!TryTextures(__instance, out var map, out var mask, out var heights)) return;
                 var produced = new MinimapCacheEntry(key, map!.width, map.height,
                     Layout(map!), Layout(mask!), Layout(heights!),
                     map!.GetRawTextureData(), mask!.GetRawTextureData(), heights!.GetRawTextureData(), false, 0);
+                captureMs += Since(started);
                 entryBytes = produced.PayloadBytes;
                 int mismatches = 0;
                 bool verified = false;
-                long started = Stopwatch.GetTimestamp();
-                if (MinimapCacheStore.TryLoad(directory, key, out var previous, out _) && previous != null)
+                started = Stopwatch.GetTimestamp();
+                if (MinimapCacheStore.TryLoad(directory, key, EntryLimit, out var previous, out _) && previous != null)
                 {
                     if (MinimapCacheStore.SameContent(previous, produced))
                     {
@@ -515,7 +518,7 @@ namespace BetterPerformance
                 compareMs += Since(started);
                 started = Stopwatch.GetTimestamp();
                 bool stored = MinimapCacheStore.TryStore(directory, produced.Promote(verified, mismatches),
-                    (long)(maxEntryMiB?.Value ?? 64) * 1024 * 1024, (long)(maxDirectoryMiB?.Value ?? 256) * 1024 * 1024,
+                    EntryLimit, (long)(maxDirectoryMiB?.Value ?? 256) * 1024 * 1024,
                     out long bytes, out string failure);
                 storeMs += Since(started);
                 entryBytes = bytes;
@@ -544,6 +547,8 @@ namespace BetterPerformance
                 map.height == mask.height && map.height == heights.height && map.width > 0 && map.height > 0;
         }
 
+        private static long EntryLimit => (long)(maxEntryMiB?.Value ?? 64) * 1024 * 1024;
+
         private static double Since(long started) => (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
 
         private static void Report(string detail = "")
@@ -552,6 +557,7 @@ namespace BetterPerformance
                 (detail.Length == 0 ? "" : "; " + detail) +
                 "; native_ms=" + nativeMs.ToString("F1", CultureInfo.InvariantCulture) +
                 "; load_ms=" + loadMs.ToString("F1", CultureInfo.InvariantCulture) +
+                "; capture_ms=" + captureMs.ToString("F1", CultureInfo.InvariantCulture) +
                 "; compare_ms=" + compareMs.ToString("F1", CultureInfo.InvariantCulture) +
                 "; store_ms=" + storeMs.ToString("F1", CultureInfo.InvariantCulture) +
                 "; key_ms=" + keyMs.ToString("F1", CultureInfo.InvariantCulture) +
@@ -576,6 +582,7 @@ namespace BetterPerformance
             gauges.Add(new NumberValue("minimap_cache_key_failures", keyFailures, "calls"));
             gauges.Add(new NumberValue("minimap_cache_native_ms", nativeMs, "ms"));
             gauges.Add(new NumberValue("minimap_cache_load_ms", loadMs, "ms"));
+            gauges.Add(new NumberValue("minimap_cache_capture_ms", captureMs, "ms"));
             gauges.Add(new NumberValue("minimap_cache_compare_ms", compareMs, "ms"));
             gauges.Add(new NumberValue("minimap_cache_store_ms", storeMs, "ms"));
             gauges.Add(new NumberValue("minimap_cache_key_ms", keyMs, "ms"));
@@ -584,7 +591,7 @@ namespace BetterPerformance
 
         internal static void Uninstall()
         {
-            Patches.UnpatchSelf();
+            PatchRemoval.UnpatchOwned(Patches);
             Installed = false;
             pendingStore = false;
             pendingKey = null;

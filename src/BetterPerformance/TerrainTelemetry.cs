@@ -280,11 +280,11 @@ namespace BetterPerformance
             Release();
         }
 
-        // Harmony rescans every patched method when it removes a patch, so a shared
-        // standalone CLR can refuse the removal for an unrelated Unity type.
+        // PatchRemoval removes each owned method on its own; one whose body a standalone
+        // CLR cannot load is reported here and leaves the other removals intact.
         private static void Release()
         {
-            try { Patches.UnpatchSelf(); }
+            try { PatchRemoval.UnpatchOwned(Patches); }
             catch (Exception exception) { Status = Status + "_unpatch_failed_" + exception.GetType().Name; }
         }
     }

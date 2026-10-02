@@ -73,7 +73,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                try { Patches.UnpatchSelf(); } catch { }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { }
                 Installed = false;
                 lastUnload = null;
                 Status = "unavailable";
@@ -243,7 +243,7 @@ namespace BetterPerformance
 
         internal static void Uninstall()
         {
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Installed = false;
             Status = "disabled";
             pending = false;

@@ -1,6 +1,6 @@
 # Capture guide
 
-BetterPerformance 0.3.2 provides diagnostics and a separate, opt-in [object-creation budget](object-budget.md), with [quota and loot-priority options](loot-latency.md). The [real-session guide](play-session.md) covers continuous capture, passive loot observations, slow-operation alerts and collection-cost safeguards. Compilation does not establish runtime compatibility or low overhead. It changes no networking settings and contains no BetterNetworking implementation.
+BetterPerformance provides diagnostics, on by default, and opt-in optimizations, each listed in the README, among them the [object-creation budget](object-budget.md) with its [quota and loot-priority options](loot-latency.md). The [real-session guide](play-session.md) covers continuous capture, passive loot observations, slow-operation alerts and collection-cost safeguards. Compilation does not establish runtime compatibility or low overhead.
 
 ### Build and package
 
@@ -26,7 +26,7 @@ The package contains one plugin DLL, documentation, report/comparison scripts, a
 
 ### Install when ready to test
 
-With the game and server stopped, copy `BetterPerformance.dll` into each installation's `BepInEx/plugins/BetterPerformance/` directory. BetterNetworking and ValheimPlus can remain installed for this diagnostics phase; see validation for tested versions and limitations.
+With the game and server stopped, copy `BetterPerformance.dll` into each installation's `BepInEx/plugins/BetterPerformance/` directory. No other mod is required; ValheimPlus can remain installed.
 
 The first launch generates `BepInEx/config/jf10r.BetterPerformance.cfg`. Default behavior:
 

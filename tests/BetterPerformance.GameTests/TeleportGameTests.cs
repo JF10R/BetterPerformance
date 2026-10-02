@@ -99,6 +99,19 @@ internal static class TeleportGameTests
             "ZDOMan.FindSectorObjects is public");
         Check(Require("SimulationDistance").Methods.Any(m => m.IsConstructor && m.IsPublic && m.Parameters.Count == 3), "SimulationDistance(int, int, bool) is public");
         Check(Calls(ready, "ZDOMan", "FindSectorObjects"), "IsAreaReady still walks FindSectorObjects");
+        // Vanilla holds a distant teleport past 8 s while the area is not ready, up to 15 s, after the census
+        // stopped: End must recount before setting the late-object baseline (the same pass SampleLate runs).
+        Check(LoadsFloat(update, 15f), "UpdateTeleport can hold a distant teleport up to 15 s");
+        using var pluginModule = ModuleDefinition.ReadModule(plugin.Location, new ReaderParameters { AssemblyResolver = resolver });
+        TypeDefinition fast = pluginModule.GetType("BetterPerformance.FastTeleportArrival")
+            ?? throw new InvalidOperationException("Teleport loading: FastTeleportArrival is missing.");
+        MethodDefinition Own(string name) => fast.Methods.Single(m => m.Name == name);
+        int CallTo(MethodDefinition method, string name) => IndexOf(method, i => i.Operand is MethodReference m &&
+            m.DeclaringType.Name == "FastTeleportArrival" && m.Name == name);
+        Check(Calls(Own("StaticsAround"), "ZDOMan", "FindSectorObjects") && CallTo(Own("SampleLate"), "StaticsAround") >= 0,
+            "the late window counts statics through StaticsAround");
+        int recount = CallTo(Own("End"), "StaticsAround");
+        Check(recount >= 0 && recount < CallTo(Own("End"), "StartLate"), "End recounts the statics before starting the late window");
 
         // 5. TeleportZonePreparation: the native terrain queue it feeds and the zone pacing the burst lifts.
         TypeDefinition builder = Require("HeightmapBuilder");

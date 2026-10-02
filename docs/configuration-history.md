@@ -1,4 +1,4 @@
-# Configuration history and diagnostic interpretation — 0.3.3
+# Configuration history and diagnostic interpretation
 
 ### Graphics state and changes
 

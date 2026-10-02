@@ -105,7 +105,7 @@ namespace BetterPerformance
             {
                 Installed = false;
                 Status = "unavailable_unexpected_shape";
-                try { Patches.UnpatchSelf(); } catch { Interlocked.Increment(ref failures); }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { Interlocked.Increment(ref failures); }
                 logger.LogWarning("Capture relay unavailable: " + exception.Message);
             }
         }
@@ -410,7 +410,7 @@ namespace BetterPerformance
 
         internal static void Uninstall()
         {
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             if (mirror != null) { try { Logger.Listeners.Remove(mirror); } catch { } mirror = null; }
             lock (Sinks) { foreach (var sink in Sinks.Values) { sink.CloseAll("plugin_shutdown"); sink.Dispose(); } Sinks.Clear(); }
             Outbox.Clear();

@@ -130,16 +130,16 @@ internal static class BiomeCacheStoreTests
             var promoted = first.Promoted();
             Check(BiomeCacheStore.TryStore(directory, key, promoted, 1 << 20, 1 << 24, out failure), "A replacing store succeeds: " + failure);
             Check(Directory.GetFiles(directory).Length == 1, "Replacement leaves exactly one file.");
-            Check(BiomeCacheStore.TryLoad(directory, key, out var loaded, out failure), "The stored entry loads: " + failure);
+            Check(BiomeCacheStore.TryLoad(directory, key, 1 << 20, out var loaded, out failure), "The stored entry loads: " + failure);
             Check(loaded != null && loaded.Verified && BiomeCacheStore.BytesEqual(loaded.Payload, first.Payload),
                 "The replacement is what comes back.");
 
-            Check(!BiomeCacheStore.TryLoad(directory, Key('f'), out var absent, out failure) && absent == null && failure == "missing",
+            Check(!BiomeCacheStore.TryLoad(directory, Key('f'), 1 << 20, out var absent, out failure) && absent == null && failure == "missing",
                 "An absent key is missing, never an exception.");
-            Check(!BiomeCacheStore.TryLoad(directory, "not a key", out _, out failure) && failure == "invalid_request",
+            Check(!BiomeCacheStore.TryLoad(directory, "not a key", 1 << 20, out _, out failure) && failure == "invalid_request",
                 "A malformed key is refused before touching the disk.");
             File.WriteAllBytes(BiomeCacheStore.FileName(directory, Key('f')), new byte[] { 1, 2, 3 });
-            Check(!BiomeCacheStore.TryLoad(directory, Key('f'), out _, out failure) && failure == "truncated",
+            Check(!BiomeCacheStore.TryLoad(directory, Key('f'), 1 << 20, out _, out failure) && failure == "truncated",
                 "A damaged file costs a regeneration, not an exception.");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
@@ -160,6 +160,17 @@ internal static class BiomeCacheStoreTests
                 "A refused store must not leave a file behind.");
             Check(!BiomeCacheStore.TryStore(directory, Key('b'), entry, 1 << 20, 1 << 24, out failure) && failure == "key_mismatch",
                 "An entry may only be stored under its own key.");
+
+            // Load applies the same entry limit to the file size, before reading a byte. Held
+            // open without sharing: only a size check can answer, a read would be unreadable.
+            Check(BiomeCacheStore.TryStore(directory, key, entry, 1 << 20, 1 << 24, out failure), "Fixture store: " + failure);
+            string path = BiomeCacheStore.FileName(directory, key);
+            long size = new FileInfo(path).Length;
+            Check(BiomeCacheStore.TryLoad(directory, key, size, out var exact, out failure) && exact != null,
+                "An entry exactly at the limit still loads: " + failure);
+            using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Check(!BiomeCacheStore.TryLoad(directory, key, size - 1, out var oversized, out failure) && oversized == null &&
+                    failure == "too_large", "A file above the entry limit is rejected before it is read, got " + failure);
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
@@ -188,7 +199,7 @@ internal static class BiomeCacheStoreTests
             var remaining = Directory.GetFiles(directory, "*.bin").Select(path => Path.GetFileNameWithoutExtension(path)!).OrderBy(name => name, StringComparer.Ordinal).ToArray();
             Check(remaining.SequenceEqual(new[] { Key('2'), Key('3'), Key('4') }),
                 "Eviction takes the oldest entries and never the one just written.");
-            Check(BiomeCacheStore.TryLoad(directory, newest, out var loaded, out failure) && loaded != null,
+            Check(BiomeCacheStore.TryLoad(directory, newest, 1 << 20, out var loaded, out failure) && loaded != null,
                 "The new entry survives its own cleanup: " + failure);
 
             // An allowance that fits exactly one entry leaves only the incoming one.

@@ -90,7 +90,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf(); Installed = Enabled = false; Status = "unavailable";
+                PatchRemoval.UnpatchOwned(Patches); Installed = Enabled = false; Status = "unavailable";
                 logger.LogWarning("Loading details unavailable: " + exception.GetType().Name);
             }
         }
@@ -236,6 +236,6 @@ namespace BetterPerformance
                 if (!float.IsNaN(lastMinimum) && !float.IsInfinity(lastMinimum)) gauges.Add(new NumberValue("loading_native_respawn_minimum_last", lastMinimum, "game_seconds"));
             }
         }
-        internal static void Uninstall() { Patches.UnpatchSelf(); Installed = Enabled = false; Status = "disabled"; Reset(); }
+        internal static void Uninstall() { PatchRemoval.UnpatchOwned(Patches); Installed = Enabled = false; Status = "disabled"; Reset(); }
     }
 }

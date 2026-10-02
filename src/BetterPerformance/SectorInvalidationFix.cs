@@ -69,7 +69,7 @@ namespace BetterPerformance
                 Status = "unavailable_unexpected_shape";
                 // A failed rollback must not escape: Installed=false already makes every
                 // hook a no-op, and an escaping exception would abort plugin start-up.
-                try { Patches.UnpatchSelf(); } catch { Interlocked.Increment(ref failures); }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { Interlocked.Increment(ref failures); }
                 logger.LogWarning("Sector invalidation fix unavailable; native invalidation retained: " + exception.Message);
             }
         }
@@ -257,7 +257,7 @@ namespace BetterPerformance
         internal static void Uninstall()
         {
             Reset();
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Installed = false;
             failed = false;
             Status = "disabled";

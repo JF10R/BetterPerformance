@@ -186,7 +186,7 @@ class NewTelemetrySummaryTests(unittest.TestCase):
         self.records[1]["gauges"] = gauges(**{
             "engine_gc_collect_count": 60, "engine_gc_collect_sum": 30, "engine_gc_collect_max": 12,
             "engine_player_loop_count": 60, "engine_player_loop_sum": 900, "engine_player_loop_max": 40,
-            "engine_player_loop_wrapped": 1,
+            "engine_player_loop_wrapped": 1, "engine_marker_coverage_percent": 87.5,
             "engine_counter_gpu_frame_time": 18, "engine_counter_cpu_main_thread_frame_time": 11,
             "fixed_steps_total": 20, "fixed_steps_max_per_frame": 3,
             "frames_with_multiple_fixed_steps": 2, "frames_observed": 60})
@@ -196,12 +196,15 @@ class NewTelemetrySummaryTests(unittest.TestCase):
         self.records[2]["gauges"] = gauges(**{
             "engine_gc_collect_count": 30, "engine_gc_collect_sum": 10, "engine_gc_collect_max": 20,
             "engine_counter_gpu_frame_time": 25, "engine_counter_cpu_main_thread_frame_time": 9,
-            "fixed_steps_total": 5, "fixed_steps_max_per_frame": 1,
+            "engine_marker_coverage_percent": 100, "fixed_steps_total": 5, "fixed_steps_max_per_frame": 1,
             "frames_with_multiple_fixed_steps": 0, "frames_observed": 30})
         report = self.render()
         self.assertIn("Module status: enabled.", report)
         self.assertIn("| gc_collect | 90 | 40.000 | 20.000 | no |", report)
         self.assertIn("| player_loop | 60 | 900.000 | 40.000 | yes |", report)
+        self.assertIn("Ring coverage (player_loop samples over frames observed): lowest 87.5%; "
+                      "1 of 2 intervals below 100%.", report)
+        self.assertNotIn("| marker_coverage_percent |", report)
         self.assertIn("| gpu_frame_time | 18.000 | 25.000 | 25.000 |", report)
         self.assertIn("GPU frame time maximum 25.000 against CPU main-thread frame time maximum 11.000", report)
         self.assertIn("do not establish it", report)

@@ -78,7 +78,9 @@ Per interval: `heightmap_budget_rebuilds_run`, `_deferred` (decisions, including
 `_demoted_measured`), `_overdue_forced`, `_critical`, `_budgeted`, `_planned_frames`,
 `_frames_over_budget` (measured spend above `RebuildBudgetMilliseconds`),
 `_max_deferral_ms`, `_frame_spend_max_ms`, `_plan_ms_max`, `_queue_peak`,
-`_cost_estimate_ms`, `_probe_failures`. `_age_across_reload` and `_age_across_reload_max_ms` count rebuilds whose
+`_cost_estimate_ms`, `_probe_failures`. `_frames_over_budget` and `_frame_spend_max_ms` count each
+frame once, in the interval it ran (since 0.4.21: before, a burst's last frame waited for the next burst
+and was lost at capture end; the final export also folds a frame still marked current, as after plugin shutdown). `_age_across_reload` and `_age_across_reload_max_ms` count rebuilds whose
 first-seen age spans an unload and re-enable of their zone (the age is not a deferral; 2026-09-30 read 33.8 s that
 way), kept out of `_max_deferral_ms`; needs the enable log. Labels: `heightmap_budget_status`, `_enabled`, `_ms`,
 `_critical_observer` (`installed`, `installed_without_enable_age`, `not_installed`).

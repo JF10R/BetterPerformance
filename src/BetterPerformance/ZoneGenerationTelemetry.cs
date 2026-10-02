@@ -72,7 +72,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                try { Patches.UnpatchSelf(); } catch { }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { }
                 Installed = false;
                 Status = "unavailable";
                 logger.LogWarning("Zone generation attribution unavailable: " + exception.GetType().Name);
@@ -266,7 +266,7 @@ namespace BetterPerformance
             Status = "disabled";
             attributeFull = null;
             Reset();
-            try { Patches.UnpatchSelf(); }
+            try { PatchRemoval.UnpatchOwned(Patches); }
             catch (Exception exception) { Status = "unpatch_failed_" + exception.GetType().Name; }
         }
     }

@@ -74,7 +74,7 @@ namespace BetterPerformance
             {
                 Installed = Enabled = false;
                 Status = "unavailable";
-                try { Patches.UnpatchSelf(); } catch { storeFailures++; }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { storeFailures++; }
                 logger.LogWarning("Biome point cache unavailable; native generation retained: " + exception.GetType().Name + ": " + exception.Message);
             }
         }
@@ -178,7 +178,7 @@ namespace BetterPerformance
             {
                 long entryLimit = (maxEntryMiB?.Value ?? 32) * 1024L * 1024L;
                 long directoryLimit = (maxDirectoryMiB?.Value ?? 128) * 1024L * 1024L;
-                bool loaded = BiomeCacheStore.TryLoad(directory, key, out var existing, out string failure);
+                bool loaded = BiomeCacheStore.TryLoad(directory, key, entryLimit, out var existing, out string failure);
                 BiomeCacheEntry entry;
                 string outcome;
                 if (loaded && existing != null)
@@ -213,7 +213,7 @@ namespace BetterPerformance
             long started = Stopwatch.GetTimestamp();
             try
             {
-                if (!BiomeCacheStore.TryLoad(directory, key, out var entry, out string failure) || entry == null)
+                if (!BiomeCacheStore.TryLoad(directory, key, (maxEntryMiB?.Value ?? 32) * 1024L * 1024L, out var entry, out string failure) || entry == null)
                 {
                     if (failure == "missing") { misses++; result = "miss"; }
                     else { loadFailures++; result = "load_failed_" + failure; }
@@ -372,7 +372,7 @@ namespace BetterPerformance
         internal static void Uninstall()
         {
             Reset();
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Installed = Enabled = false;
             Status = "disabled";
             pendingStore = false;

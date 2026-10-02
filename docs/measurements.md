@@ -1,6 +1,6 @@
 # Measurement scope
 
-This document describes the collector and its interpretation limits. Version 0.2.0 also reports status and cumulative activity for the separate [optional object-creation budget](object-budget.md). See validation for the tested conditions.
+This document describes the collector and its interpretation limits. The collector also reports status and cumulative activity for the separate [optional object-creation budget](object-budget.md). See validation for the tested conditions.
 
 ### Objective
 
@@ -41,7 +41,7 @@ Snapshot work appears in the next interval; the final snapshot has no successor.
 
 Each file uses schema version 1 and contains `start`, `interval`, `capture_end` and `writer_end` JSONL records. Each record contains `labels`, `gauges` with units, and `timings` in milliseconds. The writer completion record reports final drop totals. A missing footer, file-size limit or queue overflow prevents treating the file as a complete capture. Timing percentiles in the report are the worst retained interval bounds, not whole-session percentiles.
 
-Version 0.1.1 adds optional `marker` records. `Plugin.Mark("scenario_name")` is a main-thread-only API accepting at most 48 ASCII letters, digits, underscores or hyphens and 256 markers per capture. The preceding aggregate is flushed before changing the phase label. Calls are still assigned on completion: a background call or loop gap may span a marker. `LoopAcrossPhaseBoundary` identifies those loop gaps without removing them from whole-run totals; exclude intervals containing them from phase-specific attribution. Use predefined scenario labels, never player names or identifiers.
+Captures can contain optional `marker` records. `Plugin.Mark("scenario_name")` is a main-thread-only API accepting at most 48 ASCII letters, digits, underscores or hyphens and 256 markers per capture. The preceding aggregate is flushed before changing the phase label. Calls are still assigned on completion: a background call or loop gap may span a marker. `LoopAcrossPhaseBoundary` identifies those loop gaps without removing them from whole-run totals; exclude intervals containing them from phase-specific attribution. Use predefined scenario labels, never player names or identifiers.
 
 `LoopWithGcCollection` is the subset of loop gaps spanning a change in `GC.CollectionCount(0)`. It is a correlation signal, not GC pause duration. It overlaps `LoopInterval` and possibly `LoopAcrossPhaseBoundary`; do not add these totals.
 

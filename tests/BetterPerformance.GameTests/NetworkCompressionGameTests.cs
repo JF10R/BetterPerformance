@@ -3,8 +3,8 @@ using HarmonyLib;
 using Mono.Cecil;
 using Cil = Mono.Cecil.Cil;
 
-// ZSteamSocket reaches native socket interfaces a standalone CLR cannot type-load, so every
-// game and plugin contract here is read from Mono.Cecil metadata, exactly as
+// ZSteamSocket loads on the client harness but not everywhere (the server harness cannot load its
+// Queue<byte[]>), so every game and plugin contract here is read from Mono.Cecil metadata, exactly as
 // HostNetGameTests does. The reflection block at the end is attempted and degraded, never
 // required.
 internal static class NetworkCompressionGameTests
@@ -81,6 +81,20 @@ internal static class NetworkCompressionGameTests
         MethodDefinition getArray = Method(package, "GetArray");
         Check(!getArray.IsStatic && getArray.IsPublic && getArray.ReturnType.FullName == "System.Byte[]",
             "ZPackage.GetArray() returns the exact payload bytes");
+        // The in-place header read: Recv's package is new ZPackage(byte[]), whose stream is the
+        // field initializer's expandable MemoryStream, so TryGetBuffer exposes it. A miss here
+        // only costs the GetArray copy at runtime, but it should be seen.
+        FieldDefinition stream = Field(package, "m_stream");
+        Check(!stream.IsStatic && stream.FieldType.FullName == "System.IO.MemoryStream", "ZPackage.m_stream is an instance MemoryStream");
+        var streamNews = fromBytes.Body.Instructions.Where(i => i.OpCode == Cil.OpCodes.Newobj &&
+            (i.Operand as MethodReference)?.DeclaringType.FullName == "System.IO.MemoryStream").ToList();
+        Check(streamNews.Count == 1 && ((MethodReference)streamNews[0].Operand).Parameters.Count == 0 &&
+            streamNews[0].Next?.OpCode == Cil.OpCodes.Stfld && (streamNews[0].Next.Operand as FieldReference)?.Name == "m_stream" &&
+            fromBytes.Body.Instructions.Count(i => i.OpCode == Cil.OpCodes.Stfld && (i.Operand as FieldReference)?.Name == "m_stream") == 1,
+            "ZPackage(byte[]) builds m_stream with new MemoryStream(), whose buffer is exposable");
+        Check(fromBytes.Body.Instructions.Any(i => (i.Operand as MethodReference)?.Name == "Write" &&
+                (i.Operand as MethodReference)?.DeclaringType.FullName is "System.IO.Stream" or "System.IO.MemoryStream"),
+            "ZPackage(byte[]) copies the payload into m_stream rather than wrapping the array");
 
         // 5. Where the negotiation is registered, and where the per-socket state is dropped.
         MethodDefinition newConnection = Method(net, "OnNewConnection", "ZNetPeer");
@@ -155,6 +169,18 @@ internal static class NetworkCompressionGameTests
         int lookupAt = recvBody.FindIndex(i => (i.Operand as MethodReference)?.Name == "Lookup");
         Check(framedAt >= 0 && (lookupAt < 0 || framedAt < lookupAt),
             "AfterRecv decides on the frame itself, never on per-socket negotiation state");
+        // Once installed, decoding never stops: the peer keeps sending frames after a failure or
+        // with the option turned off live. So AfterRecv reads Installed and nothing that either
+        // of those flips, and Fail never clears Installed.
+        static bool Touches(MethodDefinition method, string member) => method.Body.Instructions.Any(i =>
+            (i.Operand as MemberReference)?.Name == member);
+        Check(Touches(Own("AfterRecv"), "get_Installed") &&
+            !Touches(Own("AfterRecv"), "get_Enabled") && !Touches(Own("AfterRecv"), "failed") && !Touches(Own("AfterRecv"), "option"),
+            "AfterRecv is gated on Installed alone, so neither a failure nor the option turned off stops decoding");
+        Check(!Touches(Own("Fail"), "set_Installed") && Touches(Own("Fail"), "failed"),
+            "Fail stops the send side through its flag and never uninstalls the decoder");
+        Check(Touches(Own("AfterRecv"), "TryGetBuffer") && Touches(Own("AfterRecv"), "GetArray"),
+            "AfterRecv reads the header in place and keeps the GetArray copy as its fallback");
         Check(Own("OnOffer").Body.Instructions.Any(i => (i.Operand as MethodReference)?.Name == "SteamSocket" &&
                 (i.Operand as MethodReference)?.DeclaringType.FullName == "BetterPerformance.SteamTelemetry"),
             "the offer handler unwraps the ServerSync wrapper before keying the socket state");
@@ -184,7 +210,8 @@ internal static class NetworkCompressionGameTests
             "net_compress_compress_kept_raw", "net_compress_decode_packets", "net_compress_decode_raw_bytes",
             "net_compress_decode_wire_bytes", "net_compress_decode_failures", "net_compress_unframed_received",
             "net_compress_peers_active", "net_compress_peers_offered", "net_compress_peers_incompatible",
-            "net_compress_failures"
+            "net_compress_failures", "net_compress_compress_ms", "net_compress_compress_max_ms",
+            "net_compress_decode_ms", "net_compress_decode_max_ms"
         }.Where(name => !literals.Contains(name)));
         Check(missingGauges.Length == 0, "gauges no longer exported: " + missingGauges);
         string missingLabels = string.Join(", ", new[]
@@ -202,12 +229,25 @@ internal static class NetworkCompressionGameTests
             Check(frame.Methods.Any(m => m.Name == name && m.IsPublic && m.IsStatic),
                 "CompressionFrame." + name + " is public and static");
 
-        // 11. Whatever this CLR can actually run. ZSteamSocket cannot be type-loaded
-        //     offline, so each of these is attempted and reported, never required.
+        // 11. Whatever this CLR can actually run. ZSteamSocket loads on the client harness only,
+        //     so each of these is attempted and reported, never required.
         Type? live = null;
         try { live = plugin.GetType("BetterPerformance.NetworkCompression", true); }
         catch (Exception exception) when (exception is TypeLoadException || exception is FileNotFoundException)
         { Console.WriteLine("STATIC ONLY network compression runtime block: " + exception.GetType().Name + "; every contract check above still ran"); }
+        // The in-place header read, run on the real type: the stream of a received package
+        // exposes its buffer, and the segment is the payload, not the capacity.
+        try
+        {
+            byte[] payload = { (byte)'B', (byte)'P', (byte)'Z', (byte)'1', 1, 2, 3, 4, 5, 6, 7 };
+            object received = Activator.CreateInstance(game.GetType("ZPackage", true)!, new object[] { payload })!;
+            var inner = (MemoryStream)received.GetType().GetField("m_stream", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(received)!;
+            Check(inner.GetType() == typeof(MemoryStream) && inner.TryGetBuffer(out var segment) &&
+                segment.Count == payload.Length && segment.Array!.Skip(segment.Offset).Take(segment.Count).SequenceEqual(payload),
+                "new ZPackage(byte[]) exposes exactly the payload through TryGetBuffer");
+        }
+        catch (Exception exception) when (Offline(exception))
+        { Console.WriteLine("STATIC ONLY network compression ZPackage buffer: " + exception.GetType().Name + "; the Cecil shape check above still ran"); }
         if (live != null)
         {
             const BindingFlags PrivateStatic = BindingFlags.Static | BindingFlags.NonPublic;
@@ -246,8 +286,8 @@ internal static class NetworkCompressionGameTests
                         g => (double)number.GetProperty("Value")!.GetValue(g)!);
                 }
                 var counters = Numbers(out var exportedLabels);
-                Check(counters.Count == 13 && counters.ContainsKey("net_compress_peers_active"),
-                    "Sample exports the thirteen counters, including the active-peer count");
+                Check(counters.Count == 17 && counters.ContainsKey("net_compress_peers_active") && counters.ContainsKey("net_compress_decode_max_ms"),
+                    "Sample exports the seventeen gauges, including the active-peer count and the hook timings");
                 foreach (string name in new[] { "net_compress_status", "net_compress_enabled", "net_compress_version", "net_compress_scope" })
                     Check(exportedLabels.Contains(name), name + " is exported");
                 Check(Numbers(out _).Values.All(value => value == 0), "Sample drains its interval counters");
@@ -263,6 +303,133 @@ internal static class NetworkCompressionGameTests
                 // standalone .NET Framework cannot JIT; the Cecil checks above cover the contract.
                 Console.WriteLine("STATIC ONLY network compression runtime block: " + exception.GetType().Name + "; every contract check above still ran");
             }
+
+            // 12. Decoding outlives sending, at runtime. The hooks are invoked directly (Harmony
+            //     never dispatches them here) on an uninitialized socket and peer. Each negative has a
+            //     positive twin under the same arrangement, and Sample is not called until the last
+            //     BeforeSend: its sweep drops the state of a socket that is not connected.
+            try
+            {
+                const BindingFlags AnyInstance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                Type liveSocket = game.GetType("ZSteamSocket", true)!, livePeer = game.GetType("ZNetPeer", true)!;
+                Type livePackage = game.GetType("ZPackage", true)!;
+                Type frameType = plugin.GetType("BetterPerformance.Core.CompressionFrame", true)!;
+                object? Prop(string name) => live.GetProperty(name, PrivateStatic)!.GetValue(null);
+                object? StaticField(string name) => live.GetField(name, PrivateStatic)!.GetValue(null);
+                MethodInfo encode = frameType.GetMethod("Encode", new[] { typeof(byte[]) })!;
+                MethodInfo isFramed = frameType.GetMethod("IsFramed", new[] { typeof(byte[]) })!;
+                MethodInfo recvHook = live.GetMethod("AfterRecv", PrivateStatic)!, sendHook = live.GetMethod("BeforeSend", PrivateStatic)!;
+                MethodInfo onOffer = live.GetMethod("OnOffer", PrivateStatic)!, fail = live.GetMethod("Fail", PrivateStatic)!;
+
+                var config = new BepInEx.Configuration.ConfigFile(
+                    Path.Combine(Path.GetTempPath(), "bp-netcompress-" + Guid.NewGuid().ToString("N") + ".cfg"), false) { SaveOnConfigSet = false };
+                // Bound first, so Install's own Bind returns this entry with the option on.
+                var option = config.Bind("Network", "CompressionEnabled", true, "test");
+                var log = new BepInEx.Logging.ManualLogSource("NetworkCompressionDecodeVerification");
+                log.LogEvent += (_, entry) => Console.WriteLine(entry.Data);
+                live.GetMethod("Install", PrivateStatic)!.Invoke(null, new object[] { config, log });
+                // The dedicated-server harness cannot load the socket's Queue<byte[]> offline, so Install reports
+                // unavailable there; the runtime scenarios need a real install and run on the client harness.
+                string installStatus = (string)Prop("Status")!;
+                if (installStatus.StartsWith("unavailable", StringComparison.Ordinal))
+                {
+                    live.GetMethod("Uninstall", PrivateStatic)!.Invoke(null, null);
+                    Console.WriteLine("STATIC ONLY network compression decode-after-stop runtime: " + installStatus.Split(':')[0] +
+                        " on this build offline; the Cecil gate check above still ran");
+                }
+                else try
+                {
+                    Check((string)Prop("Status")! == "installed" && (bool)Prop("Installed")! && (bool)Prop("Enabled")!,
+                        "with the option on, Install patches the socket and enables both directions");
+                    Check(StaticField("streamRef") != null, "Install resolves m_stream, so the frames below are read in place, not through GetArray");
+
+                    object socket = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(liveSocket);
+                    var sendQueue = new Queue<byte[]>();
+                    liveSocket.GetField("m_sendQueue", AnyInstance)!.SetValue(socket, sendQueue);
+                    object offeringPeer = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(livePeer);
+                    livePeer.GetField("m_socket", AnyInstance)!.SetValue(offeringPeer, socket);
+                    onOffer.Invoke(null, new[] { offeringPeer, (object)1 });
+
+                    byte[] Payload(int seed) => Enumerable.Range(0, 2048).Select(i => (byte)(seed + i % 16)).ToArray();
+                    object Received(byte[] wire) => Activator.CreateInstance(livePackage, new object[] { wire })!;
+                    byte[] Bytes(object zpackage) => (byte[])livePackage.GetMethod("GetArray")!.Invoke(zpackage, null)!;
+                    object Receive(object zpackage)
+                    {
+                        var args = new[] { socket, zpackage };
+                        recvHook.Invoke(null, args);
+                        return args[1];
+                    }
+                    bool Encodes()
+                    {
+                        byte[] item = Payload(9);
+                        sendQueue.Clear();
+                        sendQueue.Enqueue(item);
+                        sendHook.Invoke(null, new[] { socket });
+                        byte[] sent = sendQueue.Peek();
+                        return !ReferenceEquals(sent, item) && (bool)isFramed.Invoke(null, new object[] { sent })!;
+                    }
+                    void Decodes(string state)
+                    {
+                        byte[] payload = Payload(3);
+                        byte[] wire = (byte[])encode.Invoke(null, new object[] { payload })!;
+                        Check(!ReferenceEquals(wire, payload) && Bytes(Receive(Received(wire))).SequenceEqual(payload),
+                            state + ": a valid frame from the peer is decoded to its payload");
+                        object raw = Received(payload);
+                        Check(ReferenceEquals(Receive(raw), raw), state + ": an unframed package passes through as the same object");
+                    }
+
+                    Check(Encodes(), "enabled: the offered socket's queued packet leaves framed");
+                    Decodes("enabled");
+
+                    // (b) The option turned off live: sending stops, decoding does not.
+                    option.Value = false;
+                    Check((bool)Prop("Installed")! && !(bool)Prop("Enabled")!, "the option turned off live leaves the module installed but disabled");
+                    Check(!Encodes(), "option off: queued packets leave unencoded");
+                    Decodes("option off");
+
+                    // (a) The failure limit: the eighth failure, not the seventh, stops sending; decoding goes on.
+                    option.Value = true;
+                    Check(Encodes(), "option back on: the same socket encodes again");
+                    Check((long)StaticField("failureTotal")! == 0, "no hook call above failed silently");
+                    for (int i = 0; i < 7; i++) fail.Invoke(null, null);
+                    Check((string)Prop("Status")! == "installed" && (bool)Prop("Enabled")!, "seven failures stay under the limit");
+                    fail.Invoke(null, null);
+                    Check((string)Prop("Status")! == "failed" && !(bool)Prop("Enabled")! && (bool)Prop("Installed")!,
+                        "the eighth failure stops sending and leaves the decoder installed");
+                    Check(!Encodes(), "after the failure limit: queued packets leave unencoded");
+                    Decodes("after the failure limit");
+
+                    Type number = plugin.GetType("BetterPerformance.Core.NumberValue", true)!;
+                    Type text = plugin.GetType("BetterPerformance.Core.TextValue", true)!;
+                    var gauges = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(number))!;
+                    var labels = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(text))!;
+                    live.GetMethod("Sample", PrivateStatic)!.Invoke(null, new object[] { gauges, labels });
+                    double Gauge(string name) => (double)number.GetProperty("Value")!.GetValue(gauges.Cast<object>()
+                        .Single(g => (string)number.GetProperty("Name")!.GetValue(g)! == name))!;
+                    string Label(string name) => (string)text.GetProperty("Value")!.GetValue(labels.Cast<object>()
+                        .Single(l => (string)text.GetProperty("Name")!.GetValue(l)! == name))!;
+                    Check(Label("net_compress_status") == "failed" && Label("net_compress_enabled") == "false",
+                        "after the failure limit the exported status reads failed");
+                    Check(Gauge("net_compress_decode_packets") == 3 && Gauge("net_compress_decode_failures") == 0 &&
+                        Gauge("net_compress_unframed_received") == 3 && Gauge("net_compress_compress_packets") == 2,
+                        "Sample counts the three decoded frames, three raw packets and two encoded flushes");
+                }
+                finally
+                {
+                    live.GetMethod("Uninstall", PrivateStatic)!.Invoke(null, null);
+                }
+                Check(!(bool)Prop("Installed")! && (string)Prop("Status")! == "disabled" && !(bool)StaticField("failed")! &&
+                    (long)StaticField("failureTotal")! == 0 && StaticField("option") == null && ((System.Collections.ICollection)StaticField("States")!).Count == 0,
+                    "Uninstall restores every static the decode scenarios touched");
+            }
+            catch (Exception exception) when (Offline(exception))
+            {
+                Console.WriteLine("STATIC ONLY network compression decode-after-stop runtime: " + exception.GetType().Name + "; the Cecil gate check above still ran");
+            }
+
+            // Both Uninstall paths above (and an install rollback) must leave no socket hook behind.
+            string retained = PatchOwnership.Retained(PatchOwnership.IdOf(live));
+            Check(retained == "none", "Uninstall leaves no method patched by this module (retained: " + retained + ")");
         }
 
         Console.WriteLine("Network compression: " + checks + " static game-contract checks; the negotiated ratio requires a live two-peer session to validate.");

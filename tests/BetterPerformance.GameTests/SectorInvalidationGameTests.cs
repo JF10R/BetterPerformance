@@ -185,11 +185,9 @@ internal static class SectorInvalidationGameTests
         fix.GetMethod("Uninstall", PrivateStatic)!.Invoke(null, null);
         Check(!(bool)fix.GetProperty("Installed", PrivateStatic)!.GetValue(null)! &&
             (string)fix.GetProperty("Status", PrivateStatic)!.GetValue(null)! == "disabled", "Uninstall removes the hooks");
-        // Harmony's unpatch rescans every patched method and a standalone CLR can throw there on an
-        // unrelated Unity type; the module swallows that, so offline the patch may survive.
-        if (Harmony.GetPatchInfo(setPosition!)?.Postfixes.Any(p => p.owner.EndsWith("SectorInvalidationFix")) == true)
-            Console.WriteLine("STATIC ONLY sector invalidation unpatch: the hook survived UnpatchSelf on this CLR; contract checks above still ran");
-        else checks++;
+        // The module swallows a removal failure, so ownership is the only witness that the hooks left.
+        string retained = PatchOwnership.Retained(PatchOwnership.IdOf(fix));
+        Check(retained == "none", "Uninstall leaves no method patched by this module (retained: " + retained + ")");
 
         Console.WriteLine("Sector invalidation: " + checks + " static game-contract checks; the removed ghost requires Unity runtime validation.");
         return checks;

@@ -17,7 +17,7 @@ namespace BetterPerformance
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string PluginId = "jf10r.BetterPerformance";
-        public const string PluginVersion = "0.4.20";
+        public const string PluginVersion = "0.4.21";
         private static Plugin? instance;
         private int mainThreadId, previousFrameGc;
         private readonly Harmony harmony = new Harmony(PluginId);
@@ -73,9 +73,14 @@ namespace BetterPerformance
                 "Observe private committed and Unity allocator memory at the capture poll cadence. No forced garbage collection.").Value;
             RenderTelemetry.Enabled = Config.Bind("Diagnostics", "SparseRenderTimingEnabled", false,
                 "Optional sparse completed-frame CPU/GPU samples when the shipped engine exposes frame timings; never frame percentiles.").Value;
-            EngineTelemetry.Install(Config, Logger);
-            SystemTelemetry.Install(Config, Logger);
-            FramePacingTelemetry.Install(Config, Logger);
+            // Their only consumers are the capture poll and the post-arrival window, both absent when
+            // capture is off at startup: then no recorder is created at all.
+            if (captureEnabled.Value)
+            {
+                EngineTelemetry.Install(Config, Logger);
+                SystemTelemetry.Install(Config, Logger);
+                FramePacingTelemetry.Install(Config, Logger);
+            }
             if (Config.Bind("MapSaving", "ExactCompressionCacheEnabled", false,
                 "Reuse compressed output only when the complete native serialized map input is byte-identical. Retains a bounded cache (up to 24 MiB) and requires restart.").Value)
             {
@@ -141,7 +146,13 @@ namespace BetterPerformance
                     args.Context.AddString("Dungeon spawn slicing: " + DungeonSpawnSlicing.Status + "; active=" + DungeonSpawnSlicing.Enabled
                         + "; pending=" + DungeonSpawnSlicing.PendingCount);
                 }));
-            if (!captureEnabled.Value) { Logger.LogInfo("Diagnostics disabled. No probes installed."); return; }
+            if (!captureEnabled.Value)
+            {
+                // Probes stay out, but the optimizations installed among them must not depend on capture.
+                InstallNetworkAndOwnership();
+                Logger.LogInfo("Diagnostics disabled: probes not installed; enabled optimizations remain active.");
+                return;
+            }
             instances = AccessTools.Field(typeof(ZNetScene), "m_instances");
             TimingHooks.Install(harmony, Logger, methodTimings.Value);
             if (Config.Bind("Diagnostics", "LoadingTimelineEnabled", true,
@@ -182,13 +193,8 @@ namespace BetterPerformance
                 OwnershipTelemetry.Install(Logger);
                 OwnershipTelemetry.Enabled = OwnershipTelemetry.Installed;
             }
-            // Grant counters always; the forced insert itself stays behind its own config key.
-            OwnershipExpedite.Install(Config, Logger);
-            // Server-side teleport-ghost fix: re-issues the native sector invalidation after the position write.
-            SectorInvalidationFix.Install(Config, Logger);
-            // 0.4.12 [Network]: adaptive send window + rate policy, and framed compression; both yield to BetterNetworking.
-            NetworkFlow.Install(Config, Logger);
-            NetworkCompression.Install(Config, Logger);
+            // Same place as before 0.4.21, so Harmony patch order on shared methods is unchanged.
+            InstallNetworkAndOwnership();
             // 0.4.13 [Relay]: a client mirrors its capture (and optionally its log) to a server that accepts them.
             CaptureRelay.Install(Config, Logger, Path.Combine(Paths.BepInExRootPath, "BetterPerformance", "captures"));
             ReplicationTelemetry.Install(Config, Logger);
@@ -206,6 +212,17 @@ namespace BetterPerformance
                 (Terminal.ConsoleEvent)(args => args.Context.AddString(args.Args.Length == 2 && Mark(args.Args[1]) ?
                     "Capture marker added." : "Marker rejected: recording required; use a short identifier such as lag_loot.")));
             Logger.LogInfo("BetterPerformance diagnostics ready. Object budget: " + ObjectCreationBudget.Status);
+        }
+
+        private void InstallNetworkAndOwnership()
+        {
+            // Grant counters always; the forced insert itself stays behind its own config key.
+            OwnershipExpedite.Install(Config, Logger);
+            // Server-side teleport-ghost fix: re-issues the native sector invalidation after the position write.
+            SectorInvalidationFix.Install(Config, Logger);
+            // 0.4.12 [Network]: adaptive send window + rate policy, and framed compression; both yield to BetterNetworking.
+            NetworkFlow.Install(Config, Logger);
+            NetworkCompression.Install(Config, Logger);
         }
 
         // Main-thread-only runtime switch for a module explicitly installed at startup.
@@ -521,6 +538,17 @@ namespace BetterPerformance
             labels.Add(new TextValue("map_serialization_status", FastMapSerialization.Status));
             labels.Add(new TextValue("map_serialization_enabled", FastMapSerialization.Enabled ? "true" : "false"));
             GraphicsTelemetry.Observe(session, "poll");
+            SampleProcessAndWorld(session, gauges, labels);
+            var attributions = AttributionTelemetry.Drain();
+            session.Book.Record(Metric.CollectorPoll, (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency);
+            session.Export(gauges, labels, false, attributions);
+            session.Cadence.Observe((Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency);
+        }
+
+        // Process CPU/memory/GC since the previous export, then peers, simulation, socket queues and
+        // scene size. Shared by every interval and the final export; the world half needs a world.
+        private void SampleProcessAndWorld(CaptureSession session, List<NumberValue> gauges, List<TextValue> labels)
+        {
             double elapsed = session.Elapsed;
             double cpuWindowSeconds = elapsed - previousCpuSampleElapsed;
             try
@@ -545,6 +573,7 @@ namespace BetterPerformance
                 gauges.Add(new NumberValue("gc_gen" + i + "_collections", count - previousGc[i], "collections"));
                 previousGc[i] = count;
             }
+            if (ZNet.instance == null) { labels.Add(new TextValue("world_metrics", "no_world")); return; }
             var peers = ZNet.instance.GetPeers();
             SteamTelemetry.Sample(peers, gauges, labels);
             var distance = ZNet.instance.GetSyncedSimulationDistance();
@@ -585,10 +614,6 @@ namespace BetterPerformance
                     gauges.Add(new NumberValue("scene_instance_count", collection.Count, "objects"));
                 else labels.Add(new TextValue("scene_instance_count", "unavailable"));
             }
-            var attributions = AttributionTelemetry.Drain();
-            session.Book.Record(Metric.CollectorPoll, (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency);
-            session.Export(gauges, labels, false, attributions);
-            session.Cadence.Observe((Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency);
         }
 
         private static string Role() => ZNet.instance == null ? "no_world" :
@@ -628,7 +653,7 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { IdleZonePregeneration.Sample(gauges, labels); AssetUnloadDeferral.Sample(gauges, labels); TeleportLoadingTelemetry.Sample(gauges, labels); FastTeleportArrival.Sample(gauges, labels); TeleportZonePreparation.Sample(gauges, labels); TerrainPaintOnlyReload.Sample(gauges, labels); PositionJumpSync.Sample(gauges, labels); MinimapPlayerPinSnap.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
-            try { HeightmapRebuildBudget.Sample(gauges, labels); }
+            try { HeightmapRebuildBudget.Finish(gauges, labels); }
             catch { session.RecordProbeFailure(); }
             try { CharacterSaveDiskTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
@@ -647,6 +672,13 @@ namespace BetterPerformance
             catch { session.RecordProbeFailure(); }
             try { EngineTelemetry.Sample(gauges, labels); FramePacingTelemetry.Sample(gauges, labels); }
             catch { session.RecordProbeFailure(); }
+            // The final window carries the same host, CPU, memory, GC and world context as an interval.
+            try { SimulationPopulationTelemetry.Sample(gauges, labels); ThreadCpuTelemetry.Sample(gauges, labels); HostTelemetry.Sample(gauges, labels); }
+            catch { session.RecordProbeFailure(); }
+            try { ResourceTelemetry.Sample(gauges, labels); RenderTelemetry.Sample(gauges, labels); SystemTelemetry.Sample(gauges, labels); }
+            catch { session.RecordProbeFailure(); }
+            try { SampleProcessAndWorld(session, gauges, labels); }
+            catch { session.RecordProbeFailure(); }
             session.Export(gauges, labels, final: true, attributions: finalAttributions);
             LootQueueTelemetry.Reset();
             LootVisibilityTelemetry.Reset();
@@ -661,7 +693,9 @@ namespace BetterPerformance
                 if (retiring.Writer.Finish(2000)) retiring.Writer.Dispose();
                 else Logger.LogWarning("Capture export did not finish within the shutdown deadline; the tail may be incomplete.");
             }
-            harmony.UnpatchSelf();
+            // Never throws, so every module Uninstall below still runs.
+            if (PatchRemoval.UnpatchOwned(harmony, out Exception? removal) > 0)
+                Logger.LogWarning("Plugin patches not fully removed: " + removal!.GetType().Name + ": " + removal.Message);
             GraphicsSettingsManager.GraphicsSettingsChanged -= GraphicsSettingsApplied;
             LootQueueTelemetry.Uninstall();
             LootVisibilityTelemetry.Uninstall();

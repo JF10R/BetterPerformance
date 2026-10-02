@@ -60,7 +60,7 @@ namespace BetterPerformance
             catch (Exception exception)
             {
                 Installed = Enabled = false; Status = "unavailable";
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 logger.LogWarning("Local action telemetry unavailable: " + exception.GetType().Name);
             }
         }
@@ -225,6 +225,6 @@ namespace BetterPerformance
             Add("direct_wait_sum", summary.DirectSumMs, "ms"); Add("direct_wait_max", summary.DirectMaxMs, "ms");
             Add("ownership_wait_sum", summary.OwnershipSumMs, "ms"); Add("ownership_wait_max", summary.OwnershipMaxMs, "ms");
         }
-        internal static void Uninstall() { Enabled = false; Reset(); Patches.UnpatchSelf(); Installed = false; Status = "disabled"; }
+        internal static void Uninstall() { Enabled = false; Reset(); PatchRemoval.UnpatchOwned(Patches); Installed = false; Status = "disabled"; }
     }
 }

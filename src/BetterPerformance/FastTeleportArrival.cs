@@ -99,7 +99,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 Installed = false;
                 Status = "unavailable";
                 logger.LogWarning("Fast teleport arrival unavailable; the native 8 s floor stays: " + exception.GetType().Name + ": " + exception.Message);
@@ -138,7 +138,7 @@ namespace BetterPerformance
                 // Vanilla checks timer > 8 before IsAreaReady and FindFloor, both re-run this frame.
                 teleportTimer(__instance) = (float)TeleportArrivalPolicy.NativeFloorSeconds + 0.01f;
                 active = false;
-                StartLate(teleportTarget!(__instance), now);
+                StartLate(teleportTarget!(__instance), now, Census.StaticCount);
             }
             catch (Exception exception)
             {
@@ -156,17 +156,21 @@ namespace BetterPerformance
             active = false;
             nativeFloor++;
             BlockerCounts[(int)lastBlocker]++;
-            // The native arrival is the control for the late-object count.
-            if (activePlayer != null) StartLate(teleportTarget!(activePlayer), now);
+            // The native arrival is the control for the late-object count. The census stopped at 8 s and vanilla
+            // can hold the screen to 15 s: recount, so objects received meanwhile are not counted late.
+            if (activePlayer == null) return;
+            Vector3 target = teleportTarget!(activePlayer);
+            int statics = StaticsAround(target);
+            StartLate(target, now, statics >= 0 ? statics : Census.StaticCount);
         }
 
-        private static void StartLate(Vector3 target, double now)
+        private static void StartLate(Vector3 target, double now, int baseline)
         {
             lateActive = true;
             lateTarget = target;
             lateUntil = now + LateWindowSeconds;
             lateNextCheck = 0;
-            lateBase = Census.StaticCount;
+            lateBase = baseline;
             lateGrowth = 0;
         }
 
@@ -174,16 +178,24 @@ namespace BetterPerformance
         {
             if (now < lateNextCheck) return;
             lateNextCheck = now + CheckIntervalSeconds;
+            int statics = StaticsAround(lateTarget);
+            if (statics < 0) { lateActive = false; return; }
+            lateGrowth = Math.Max(lateGrowth, statics - lateBase);
+            if (now >= lateUntil) FinishLate();
+        }
+
+        // Static objects received in the 3x3 zones around target; -1 without a scene.
+        private static int StaticsAround(Vector3 target)
+        {
             ZNetScene scene = ZNetScene.instance;
             ZDOMan manager = ZDOMan.instance;
-            if (scene == null || manager == null) { lateActive = false; return; }
+            if (scene == null || manager == null) return -1;
             AreaObjects.Clear();
-            manager.FindSectorObjects(ZoneSystem.GetZone(lateTarget), new SimulationDistance(1, 0), AreaObjects);
+            manager.FindSectorObjects(ZoneSystem.GetZone(target), new SimulationDistance(1, 0), AreaObjects);
             int statics = 0;
             foreach (ZDO zdo in AreaObjects)
                 if (!TeleportArrivalPolicy.IsDynamic(CategoryOf(scene, zdo.GetPrefab()))) statics++;
-            lateGrowth = Math.Max(lateGrowth, statics - lateBase);
-            if (now >= lateUntil) FinishLate();
+            return statics;
         }
 
         private static void FinishLate()
@@ -369,7 +381,7 @@ namespace BetterPerformance
 
         internal static void Uninstall()
         {
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Installed = false;
             Status = "disabled";
             active = lateActive = false;

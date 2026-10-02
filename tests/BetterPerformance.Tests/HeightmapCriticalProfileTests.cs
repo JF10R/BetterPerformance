@@ -54,6 +54,36 @@ internal static class HeightmapCriticalProfileTests
         Check(log.AgeMs(1, 5000, 1000, out exact) == 1000 && exact, "A re-enable counts from the newest entry.");
         Check(log.AgeMs(9, 5000, 1000, out exact) == 3000 && !exact, "Missing once full: at least the oldest retained age.");
 
+        // The budget's frame spend: a burst's last frame lands in the interval it ran, once, and never in the next capture.
+        var spend = new HeightmapFrameSpend();
+        spend.CloseBefore(1, 4);
+        Check(!spend.Pending && spend.TakeMaxMs() == 0 && spend.TakeFramesOverBudget() == 0, "Nothing to fold before any plan.");
+        spend.Open(10, 4); spend.Add(3); spend.Add(3);
+        spend.CloseBefore(10, 4);
+        Check(spend.Pending && spend.Ms == 6, "The current frame stays open: its late batch may not be over.");
+        spend.CloseBefore(11, 4);
+        Check(!spend.Pending && spend.TakeMaxMs() == 6 && spend.TakeFramesOverBudget() == 1,
+            "A sample after the burst's last frame folds it in (single-frame burst included).");
+        spend.CloseBefore(12, 4);
+        spend.Open(13, 4);
+        Check(spend.TakeMaxMs() == 0 && spend.TakeFramesOverBudget() == 0 && spend.Ms == 0, "A folded frame is never folded twice.");
+        spend.Add(2);
+        spend.Open(14, 4); spend.Add(5);
+        spend.CloseBefore(15, 4);
+        Check(spend.TakeMaxMs() == 5 && spend.TakeFramesOverBudget() == 1, "The next plan folds the previous frame: 2 ms under, 5 ms over.");
+        spend.Open(20, 4); spend.Add(9);
+        spend.Reset();
+        Check(!spend.Pending && spend.Ms == 0, "Reset drops the open frame.");
+        spend.Open(21, 4);
+        spend.CloseBefore(22, 4);
+        Check(spend.TakeMaxMs() == 0 && spend.TakeFramesOverBudget() == 0, "A reset frame never leaks into the next capture.");
+        // A capture stopped after that frame's late batch (plugin shutdown): the final export folds it anyway.
+        spend.Open(30, 4); spend.Add(7);
+        spend.CloseBefore(30, 4);
+        spend.Close(4);
+        Check(!spend.Pending && spend.TakeMaxMs() == 7 && spend.TakeFramesOverBudget() == 1,
+            "The final export folds the frame still marked current.");
+
         // Zero behaviour change: the plan with the observer fed from it equals the plan without.
         var watched = Candidates();
         var control = Candidates();

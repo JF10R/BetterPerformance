@@ -62,7 +62,7 @@ namespace BetterPerformance
                 Installed = Enabled = false;
                 Status = "unavailable";
                 Prefabs.Clear();
-                try { Patches.UnpatchSelf(); } catch { Interlocked.Increment(ref failures); }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { Interlocked.Increment(ref failures); }
                 logger.LogWarning("Mined-drop hit-point placement unavailable; native placement retained: " +
                     exception.GetType().Name + ": " + exception.Message);
             }
@@ -195,7 +195,7 @@ namespace BetterPerformance
             Tracked.Clear();
             Prefabs.Clear();
             SeenPrefabs.Clear();
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Installed = Enabled = false;
             Status = "disabled";
             option = null;

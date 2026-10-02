@@ -62,11 +62,11 @@ namespace BetterPerformance
             }
         }
 
-        // Harmony walks every method it knows about, and on a standalone CLR that can throw
-        // while loading a Unity type. Removal must never escape install, sample or uninstall.
+        // PatchRemoval removes each owned method on its own and rethrows the first failure
+        // (a body a standalone CLR cannot load). Removal must never escape install, sample or uninstall.
         private static void Remove(Harmony patches, Action<string> failed)
         {
-            try { patches.UnpatchSelf(); }
+            try { PatchRemoval.UnpatchOwned(patches); }
             catch (Exception exception) { failed(exception.GetType().Name); }
         }
 

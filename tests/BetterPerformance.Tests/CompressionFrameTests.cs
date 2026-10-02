@@ -21,6 +21,19 @@ internal static class CompressionFrameTests
         byte[] largest = Compressible(CompressionFrame.MaxRawLength, seed: 7);
         Check(CompressionFrame.TryDecode(CompressionFrame.Encode(largest), out byte[] back)
             && back.SequenceEqual(largest), "a payload at MaxRawLength round-trips");
+
+        // In place: a frame inside a larger buffer, as a MemoryStream exposes it, with
+        // unrelated bytes on both sides. Only (offset, count) belongs to the payload.
+        byte[] payload = Compressible(8192, seed: 21);
+        byte[] frame = CompressionFrame.Encode(payload);
+        byte[] buffer = Random(frame.Length + 300, seed: 22);
+        const int at = 100;
+        Array.Copy(frame, 0, buffer, at, frame.Length);
+        Check(CompressionFrame.IsFramed(buffer, at, frame.Length), "a frame is found at its offset");
+        Check(CompressionFrame.TryDecode(buffer, at, frame.Length, out byte[] inPlace) && inPlace.SequenceEqual(payload),
+            "a frame decodes in place from its segment");
+        Check(!CompressionFrame.IsFramed(buffer, 0, buffer.Length), "the bytes before the segment are not a frame");
+        Check(!CompressionFrame.IsFramed(buffer, at, CompressionFrame.HeaderLength - 1), "a segment shorter than the header is not a frame");
     }
 
     public static void PassThrough()
@@ -105,6 +118,18 @@ internal static class CompressionFrameTests
             CompressionFrame.TryDecode(fuzz, out byte[] _);
         }
         Check(!CompressionFrame.TryDecode(noise, out byte[] _), "random bytes never decode");
+
+        // Segments: the count bounds the payload even when the real bytes continue past it,
+        // and a segment outside the array is refused rather than thrown on.
+        byte[] buffer = new byte[framed.Length + 64];
+        Array.Copy(framed, 0, buffer, 16, framed.Length);
+        Check(CompressionFrame.TryDecode(buffer, 16, framed.Length, out byte[] _), "the fixture decodes in place");
+        Check(!CompressionFrame.TryDecode(buffer, 16, framed.Length - 5, out byte[] _),
+            "a segment cut short is refused although the array still holds the rest");
+        Check(!CompressionFrame.TryDecode(buffer, 16, buffer.Length, out byte[] _) && !CompressionFrame.IsFramed(buffer, 16, buffer.Length),
+            "a segment running past the array is refused");
+        Check(!CompressionFrame.IsFramed(buffer, -1, framed.Length) && !CompressionFrame.TryDecode(null!, 0, 8, out byte[] _),
+            "a negative offset or a null array is refused");
     }
 
     private static void WriteLength(byte[] frame, int length)

@@ -56,6 +56,9 @@ does the first two and never serves.
 - Any exception on the main-thread path disables the module for the process
   (`biome_cache_status=failed_<type>`); the worker's failures only count.
 - The native `cache/` files are neither read nor written; `RemoveCache` still runs before us.
+- A file above `MaxEntryMiB` is rejected on its size before it is read
+  (`load_failed_too_large`); an entry above a lowered limit fails to load, as the store would
+  now refuse it.
 
 ## Counters
 

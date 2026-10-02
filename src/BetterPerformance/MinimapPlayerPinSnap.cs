@@ -50,7 +50,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 Installed = false;
                 Status = "unavailable";
                 playerPins = null; playerInfo = null; pinUpdateRequired = null;
@@ -108,7 +108,7 @@ namespace BetterPerformance
 
         internal static void Uninstall()
         {
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Installed = false;
             Status = "disabled";
             playerPins = null; playerInfo = null; pinUpdateRequired = null;

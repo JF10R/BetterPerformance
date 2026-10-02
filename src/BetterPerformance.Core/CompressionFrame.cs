@@ -42,23 +42,34 @@ namespace BetterPerformance.Core
             }
         }
 
-        public static bool IsFramed(byte[] data) =>
-            data != null && data.Length >= HeaderLength &&
-            data[0] == Magic0 && data[1] == Magic1 && data[2] == Magic2 && data[3] == Magic3;
+        public static bool IsFramed(byte[] data) => data != null && IsFramed(data, 0, data.Length);
+
+        // The segment form reads a frame in place, e.g. inside a capacity-sized stream buffer;
+        // only the count bytes from offset belong to the payload. A bad segment is not a frame.
+        public static bool IsFramed(byte[] data, int offset, int count) =>
+            data != null && offset >= 0 && count >= HeaderLength && offset <= data.Length - count &&
+            data[offset] == Magic0 && data[offset + 1] == Magic1 && data[offset + 2] == Magic2 && data[offset + 3] == Magic3;
+
+        public static bool TryDecode(byte[] data, out byte[] raw)
+        {
+            if (data != null) return TryDecode(data, 0, data.Length, out raw);
+            raw = Array.Empty<byte>();
+            return false;
+        }
 
         // False for anything that is not a frame this encoder could have produced:
         // wrong magic, a length outside the bound, a truncated or corrupt payload, or a
         // payload whose inflated length disagrees with the header. Never throws.
-        public static bool TryDecode(byte[] data, out byte[] raw)
+        public static bool TryDecode(byte[] data, int offset, int count, out byte[] raw)
         {
             raw = Array.Empty<byte>();
-            if (!IsFramed(data)) return false;
-            int length = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
+            if (!IsFramed(data, offset, count)) return false;
+            int length = data[offset + 4] | (data[offset + 5] << 8) | (data[offset + 6] << 16) | (data[offset + 7] << 24);
             if (length < 0 || length > MaxRawLength) return false;
             try
             {
                 var output = length == 0 ? Array.Empty<byte>() : new byte[length];
-                using (var buffer = new MemoryStream(data, HeaderLength, data.Length - HeaderLength, writable: false))
+                using (var buffer = new MemoryStream(data, offset + HeaderLength, count - HeaderLength, writable: false))
                 using (var inflate = new DeflateStream(buffer, CompressionMode.Decompress))
                 {
                     int read = 0;

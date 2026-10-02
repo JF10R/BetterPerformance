@@ -70,7 +70,7 @@ namespace BetterPerformance
             {
                 Installed = Enabled = false;
                 Status = "unavailable";
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 logger.LogWarning("Ownership telemetry unavailable: " + exception.GetType().Name);
             }
         }
@@ -373,7 +373,7 @@ namespace BetterPerformance
         {
             Enabled = false;
             Reset();
-            Patches.UnpatchSelf();
+            PatchRemoval.UnpatchOwned(Patches);
             Installed = false;
             Status = "disabled";
             fieldStatus = markerStatus = "unavailable";

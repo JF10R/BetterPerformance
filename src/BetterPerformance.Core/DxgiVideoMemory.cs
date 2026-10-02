@@ -55,6 +55,14 @@ namespace BetterPerformance.Core
             return query(adapter, 0, 0, out local) >= 0 && query(adapter, 0, 1, out nonLocal) >= 0;
         }
 
+        // An adapter with dedicated memory reports positive local and non-local budgets. One without
+        // (a VM's display-only Basic Render Driver) may report zero; that is unavailable, not a reader fault.
+        public static bool BudgetsPlausible(VideoMemoryInfo local, VideoMemoryInfo nonLocal, ulong dedicatedVideoMemory)
+        {
+            if (local.Budget > 0 && local.CurrentUsage > local.Budget * 4) return false;
+            return dedicatedVideoMemory == 0 || (local.Budget > 0 && nonLocal.Budget > 0);
+        }
+
         // The user-mode driver version DXGI reports, as Windows prints it (e.g. 32.0.15.6094).
         public static string FormatDriverVersion(long version)
         {

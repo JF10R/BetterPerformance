@@ -30,7 +30,7 @@ internal static class Program
             PackageCopyTests.Run, ActionTrackerTests.Run, LoadingTimelineTests.Run,
             FrameStepWindowTests.Run, KeyedAggregatorTests.Run, AttributionTargetSplitTests.Run,
             DirectRpcHeaderTests.Run, ZoneGenerationTests.Run, HeightmapRebuildPlannerTests.Run, HeightmapCriticalProfileTests.Run,
-            CloudWriteBufferTests.Run, CharacterSaveBreakdownTests.Run, ResendPolicyTests.Run,
+            CloudWriteBufferTests.Run, CharacterSaveBreakdownTests.Run, ResendPolicyTests.Run, AdmissionWindowTests.Run,
             SendWindowControllerTests.TargetFormulaAndClamps, SendWindowControllerTests.BackoffHoldAndRecovery,
             SendWindowControllerTests.TimeValidationCapacityAndDrain,
             CompressionFrameTests.RoundTrip, CompressionFrameTests.PassThrough,

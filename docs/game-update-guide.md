@@ -38,7 +38,7 @@ For each affected module, in this order:
 Never validate on a real character or world. The isolated runner copies the game into `.qa/runs/<id>/`, generates a `bp_test_` world, uses a temporary character, verifies by hash that every real save file is unchanged, and restores preferences:
 
 ```powershell
-pwsh -File .qa/run.ps1 -Version <ver> -MaxRuns 1 -TestVariant fast_join_production -WithoutBetterNetworking
+pwsh -File .qa/run.ps1 -Version <ver> -MaxRuns 1 -TestVariant fast_join_production
 ```
 
 Then read the captures with `scripts/summarize_capture.py` and confirm: `probe_failures_total` = 0, `writer_dropped_records_total` = 0, every module status `installed`/`enabled`, and the module-specific counters listed in the latest validation record. The isolated client has no graphics device: GPU and video-memory readings stay `headless` there. Modules that the headless workload cannot exercise (cloud writes, world-map generation, terrain operations, second-player ownership) keep their "unproven at runtime" note and are watched in the first real session through their `*_status` and `*_result` labels.

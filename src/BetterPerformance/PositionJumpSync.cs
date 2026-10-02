@@ -78,7 +78,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                Patches.UnpatchSelf();
+                PatchRemoval.UnpatchOwned(Patches);
                 Installed = false;
                 Status = "unavailable";
                 sendPosition = null; sendPlayerList = null; peerOf = null;
@@ -235,7 +235,7 @@ namespace BetterPerformance
 
         internal static void Uninstall()
         {
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Installed = false;
             Status = "disabled";
             sendPosition = null; sendPlayerList = null; peerOf = null;

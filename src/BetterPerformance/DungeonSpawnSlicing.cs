@@ -63,7 +63,7 @@ namespace BetterPerformance
             }
             catch (Exception exception)
             {
-                try { Patches.UnpatchSelf(); } catch { Interlocked.Increment(ref failures); }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { Interlocked.Increment(ref failures); }
                 Release("patch_failed");
                 logger.LogWarning("Dungeon spawn slicing could not patch the generator: " + exception.GetType().Name);
             }
@@ -315,7 +315,7 @@ namespace BetterPerformance
             }
             catch { host = null; }
             Reset();
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Release("disabled");
             option = null;
             budgetMs = null;

@@ -23,11 +23,11 @@ namespace BetterPerformance
         private const int WindowMilliseconds = 1000, DedupeLimit = 4096;
         private static readonly Harmony Patches = new Harmony(Plugin.PluginId + ".OwnershipExpedite");
         private static readonly Stopwatch Clock = new Stopwatch();
-        private static readonly HashSet<Forced> Window = new HashSet<Forced>();
+        // Operational quota and dedupe, never touched by a capture start: see Reset.
+        private static readonly AdmissionWindow<Forced> Window = new AdmissionWindow<Forced>(WindowMilliseconds, DedupeLimit);
         private static ConfigEntry<bool>? option;
         private static ConfigEntry<int>? perSecond;
         private static int ownerThread;
-        private static long windowStart, windowCount;
         private static long observed, expedited, skippedSender, skippedOffline, skippedUnchanged, skippedCapacity, skippedDuplicate;
         private static long otherThreadSkips, failures;
         [ThreadStatic] private static bool incoming;
@@ -51,7 +51,7 @@ namespace BetterPerformance
                 ValidateContracts();
                 ownerThread = Thread.CurrentThread.ManagedThreadId;
                 Clock.Restart();
-                windowStart = 0;
+                Window.Clear();
                 Patches.Patch(Contract.Incoming!,
                     prefix: new HarmonyMethod(typeof(OwnershipExpedite), nameof(BeforeIncoming)),
                     finalizer: new HarmonyMethod(typeof(OwnershipExpedite), nameof(AfterIncoming)));
@@ -68,7 +68,7 @@ namespace BetterPerformance
                 Status = "unavailable";
                 // A failed rollback must not escape: Installed=false already makes every
                 // hook a no-op, and an escaping exception would abort plugin start-up.
-                try { Patches.UnpatchSelf(); } catch { Interlocked.Increment(ref failures); }
+                try { PatchRemoval.UnpatchOwned(Patches); } catch { Interlocked.Increment(ref failures); }
                 logger.LogWarning("Owner-grant expedite unavailable; native send ordering retained: " + exception.GetType().Name);
             }
         }
@@ -179,19 +179,12 @@ namespace BetterPerformance
         // whether or not a capture is recording.
         private static bool Admit(long peer, ZDOID id)
         {
-            long now = Clock.ElapsedMilliseconds;
-            if (now - windowStart >= WindowMilliseconds)
+            switch (Window.Admit(new Forced(peer, id), Clock.ElapsedMilliseconds, perSecond?.Value ?? 0))
             {
-                windowStart = now;
-                windowCount = 0;
-                Window.Clear();
+                case Admission.Admitted: return true;
+                case Admission.Duplicate: Interlocked.Increment(ref skippedDuplicate); return false;
+                default: Interlocked.Increment(ref skippedCapacity); return false;
             }
-            int limit = perSecond?.Value ?? 0;
-            if (limit < 1 || windowCount >= limit || Window.Count >= DedupeLimit)
-            { Interlocked.Increment(ref skippedCapacity); return false; }
-            if (!Window.Add(new Forced(peer, id))) { Interlocked.Increment(ref skippedDuplicate); return false; }
-            windowCount++;
-            return true;
         }
 
         private readonly struct Forced : IEquatable<Forced>
@@ -204,12 +197,10 @@ namespace BetterPerformance
             public override int GetHashCode() => unchecked(peer.GetHashCode() * 397 ^ id.GetHashCode());
         }
 
+        // Statistics only. The quota and dedupe window are operational state: a capture that stops and
+        // restarts within the same second (every segment rotation) must not reopen them.
         internal static void Reset()
         {
-            ownerThread = Thread.CurrentThread.ManagedThreadId;
-            Window.Clear();
-            windowCount = 0;
-            windowStart = Clock.ElapsedMilliseconds;
             Interlocked.Exchange(ref observed, 0);
             Interlocked.Exchange(ref expedited, 0);
             Interlocked.Exchange(ref skippedSender, 0);
@@ -239,13 +230,12 @@ namespace BetterPerformance
         internal static void Uninstall()
         {
             Reset();
-            try { Patches.UnpatchSelf(); } catch { }
+            try { PatchRemoval.UnpatchOwned(Patches); } catch { }
             Installed = false;
             Status = "disabled";
             option = null;
             perSecond = null;
             Window.Clear();
-            windowCount = 0;
             Clock.Reset();
         }
     }
